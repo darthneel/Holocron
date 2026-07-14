@@ -1,0 +1,7 @@
+{
+  "name": "holocron-api-runner",
+  "private": true,
+  "scripts": {
+    "dev": "bin/server"
+  }
+}

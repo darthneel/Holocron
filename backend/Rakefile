@@ -1,0 +1,26 @@
+# frozen_string_literal: true
+
+require "rake/testtask"
+require_relative "lib/holocron/database"
+
+namespace :db do
+  desc "Run database migrations"
+  task :migrate do
+    Holocron::Database.migrate!
+  end
+
+  desc "Load the fictional Cedar Grove office"
+  task seed: :migrate do
+    load File.expand_path("db/seeds.rb", __dir__)
+  end
+
+  desc "Create and seed the local database"
+  task setup: :seed
+end
+
+Rake::TestTask.new do |task|
+  task.libs << "test"
+  task.pattern = "test/**/*_test.rb"
+end
+
+task default: :test

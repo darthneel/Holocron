@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+if [ -x /opt/homebrew/opt/ruby/bin/ruby ]; then
+  DEFAULT_RUBY_BIN=/opt/homebrew/opt/ruby/bin/ruby
+else
+  DEFAULT_RUBY_BIN="$(command -v ruby)"
+fi
+
+RUBY_BIN="${RUBY_BIN:-$DEFAULT_RUBY_BIN}"
+SYSTEM_GEM_PATH="$($RUBY_BIN -rrubygems -e 'print Gem.path.join(":")')"
+
+export GEM_HOME="$ROOT/vendor/gems"
+export GEM_PATH="$GEM_HOME:$SYSTEM_GEM_PATH"
+
+cd "$ROOT"
+exec "$RUBY_BIN" -Itest test/app_test.rb
