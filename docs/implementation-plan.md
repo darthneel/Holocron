@@ -9,10 +9,6 @@ Holocron is a domain-informed principal-operations prototype with two goals:
 2. Learn agentic-system architecture by building context, orchestration, tools,
    approval controls, observability, and evaluation one feature at a time.
 
-This is not intended to reproduce Chief AI's private product, branding, user
-interface, or internal architecture. Public product descriptions inform the
-domain, while every implementation decision in this repository is our own.
-
 ## Working Method
 
 Each step is a complete vertical slice. It should include the database change,
