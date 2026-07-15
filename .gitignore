@@ -44,6 +44,7 @@ next-env.d.ts
 /work/
 /backend/.bundle/
 /backend/db/*.sqlite3
+/backend/tmp/eval-results/
 /backend/test/tmp/
 /backend/vendor/bundle/
 /backend/vendor/gems/

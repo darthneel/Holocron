@@ -342,6 +342,8 @@ Implemented:
 - Durable provenance, token counts, timing, attempts, warnings, and audits
 - Paste, extract, review, edit, and accept workflow in the request workbench
 - Atomic one-time acceptance through the existing scheduling-request service
+- Opt-in live-model Minitest eval corpus with deterministic field assertions,
+  usage reporting, and no database writes
 
 Architectural lesson:
 
@@ -366,6 +368,9 @@ Completion gate met:
   events remain inspectable.
 - Tests cover complete, incomplete, malformed, refused, transient, replayed, and
   prompt-injection-shaped inputs.
+- Live eval fixtures cover complete, incomplete, ambiguous, participant-role,
+  broad-availability, and adversarial extraction behavior without joining the
+  deterministic test suite.
 
 ## Step 7: Grounded Briefing Generation
 

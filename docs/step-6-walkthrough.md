@@ -37,6 +37,26 @@ Step 6 introduces request extraction as a narrow, human-reviewed AI capability.
 - `app/page.tsx` and `app/globals.css` add the paste and review workflow.
 - `backend/test/app_test.rb` traces success, ambiguity, malformed output, refusal,
   retry, adversarial input, acceptance, replay, and real-provider parsing.
+- `backend/eval/fixtures/request_extractions.json` contains synthetic live-model
+  cases and deterministic field-level expectations.
+- `backend/eval/request_extraction_eval_test.rb` runs those cases through the
+  production prompt, schema, router, and normalizer without database writes.
+
+## Live Evals
+
+Live evals are intentionally separate from the deterministic test suite because
+they use the network, consume credits, and can vary between model runs. Run the
+full corpus with explicit billing confirmation:
+
+```bash
+RUN_LIVE_EVALS=1 backend/bin/eval-request-extraction
+```
+
+The Minitest report includes case and assertion pass rates, tokens, latency, and
+estimated cost. Complete inputs, outputs, failures, provider identifiers, and
+usage metrics are saved under the ignored `backend/tmp/eval-results/` directory.
+The eval path does not create extraction, scheduling-request, relationship, or
+audit records.
 
 ## Failure Cases
 

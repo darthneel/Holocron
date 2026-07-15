@@ -71,8 +71,29 @@ export AI_REQUEST_EXTRACTION_MODEL=openai/gpt-5.6-luna
 export OPENROUTER_API_KEY=...
 ```
 
-See `.env.example` for the non-secret defaults. The server does not automatically
-load env files.
+See `.env.example` for the non-secret defaults. The local server and live eval
+runner load the ignored `.env.local` file automatically.
+
+## Live Request Extraction Evals
+
+The opt-in eval suite runs synthetic scheduling emails through the configured
+real model, shared prompt and schema, and deterministic normalizer without
+writing request or audit records:
+
+```bash
+RUN_LIVE_EVALS=1 backend/bin/eval-request-extraction
+```
+
+The command makes billed network requests and writes a detailed report under
+`backend/tmp/eval-results/`. Use Minitest's name filter to rerun one case:
+
+```bash
+RUN_LIVE_EVALS=1 backend/bin/eval-request-extraction -n /conflicting_duration/
+```
+
+Cost estimates use the configured Luna rates by default. Set
+`EVAL_INPUT_USD_PER_MILLION` and `EVAL_OUTPUT_USD_PER_MILLION` when evaluating a
+different model.
 
 ## Deployment
 
