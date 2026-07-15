@@ -1,10 +1,5 @@
 # Holocron
 
-Holocron is a learning project for principal-operations software and agentic
-architecture. Step 6 adds the first narrow AI boundary: staff can paste request
-email text, inspect a validated structured draft, edit it, and explicitly create
-the scheduling request without allowing model output to write domain records.
-
 ## Current Architecture
 
 - React and TypeScript frontend under `app/`
