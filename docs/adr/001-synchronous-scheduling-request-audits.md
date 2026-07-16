@@ -13,7 +13,7 @@ the audit history must reliably identify each completed change.
 ## Decision
 
 The scheduling-request domain service writes the request, its participants,
-candidate windows, and audit event synchronously in one SQLite transaction.
+candidate windows, and audit event synchronously in one database transaction.
 The development actor comes from `X-Holocron-Actor-Email` and is stored as the
 audit event actor and the request creator.
 

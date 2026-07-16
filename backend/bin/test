@@ -2,6 +2,13 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ENV_FILE="$ROOT/../.env.local"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  . "$ENV_FILE"
+  set +a
+fi
+
 if [ -x /opt/homebrew/opt/ruby/bin/ruby ]; then
   DEFAULT_RUBY_BIN=/opt/homebrew/opt/ruby/bin/ruby
 else
@@ -9,10 +16,10 @@ else
 fi
 
 RUBY_BIN="${RUBY_BIN:-$DEFAULT_RUBY_BIN}"
-SYSTEM_GEM_PATH="$($RUBY_BIN -rrubygems -e 'print Gem.path.join(":")')"
-
-export GEM_HOME="$ROOT/vendor/gems"
-export GEM_PATH="$GEM_HOME:$SYSTEM_GEM_PATH"
+BUNDLE_BIN="$(dirname "$RUBY_BIN")/bundle"
+TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://localhost:5432/holocron_test}"
+export PATH="$(dirname "$RUBY_BIN"):$PATH"
 
 cd "$ROOT"
-exec "$RUBY_BIN" -Itest test/app_test.rb
+DATABASE_URL="$TEST_DATABASE_URL" "$BUNDLE_BIN" exec rake db:create >/dev/null
+exec "$BUNDLE_BIN" exec "$RUBY_BIN" -Itest test/app_test.rb

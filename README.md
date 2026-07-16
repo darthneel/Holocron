@@ -5,14 +5,14 @@
 - React and TypeScript frontend under `app/`
 - Roda JSON API under `backend/`
 - Sequel migrations and queries
-- SQLite for dependency-free local development
+- PostgreSQL for development, tests, and deployment
 - Fictional Cedar Grove Mayor's Office seed data
 
 The frontend and API are separate processes. The frontend never reads the
 database directly.
 
 ```text
-Browser -> React UI -> Roda API -> Sequel -> SQLite
+Browser -> React UI -> Roda API -> Sequel -> PostgreSQL
 ```
 
 ## Run Locally
@@ -23,13 +23,27 @@ Install frontend dependencies:
 npm install
 ```
 
-Install Ruby dependencies and initialize the database:
+Add development and test PostgreSQL URLs to the ignored `.env.local` file:
+
+```bash
+DATABASE_URL=postgres://USER:PASSWORD@localhost:5432/holocron_development
+TEST_DATABASE_URL=postgres://USER:PASSWORD@localhost:5432/holocron_test
+```
+
+Install Ruby dependencies, create both databases, and initialize the development
+database:
 
 ```bash
 cd backend
 bundle install
+set -a
+. ../.env.local
+set +a
 bundle exec rake db:setup
 ```
+
+`backend/bin/test` creates the configured `_test` database when needed and
+resets only its `public` schema before running the suite.
 
 Start the API and frontend together:
 
@@ -92,10 +106,11 @@ different model.
 
 ## Deployment
 
-This milestone remains local-only. The frontend depends on the separate Ruby
-API and its SQLite database, which are not part of the current Sites deployment
+This milestone remains local-only. The frontend depends on the separate Ruby API
+and PostgreSQL database, which are not part of the current Sites deployment
 target. Publishing only the frontend would produce a workspace that cannot load
-or persist records. Deployment should follow a later backend-hosting decision.
+or persist records. Deployment still requires a backend-hosting decision and a
+managed PostgreSQL connection URL.
 
 ## Fake Entry Flow
 

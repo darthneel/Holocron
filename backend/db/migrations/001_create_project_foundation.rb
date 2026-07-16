@@ -2,9 +2,11 @@
 
 Sequel.migration do
   up do
+    run "CREATE EXTENSION IF NOT EXISTS citext"
+
     create_table(:workspaces) do
       String :id, primary_key: true
-      String :slug, null: false, unique: true
+      column :slug, "citext", null: false, unique: true
       String :name, null: false
       String :timezone, null: false
       Integer :retention_days, null: false, default: 365
@@ -18,7 +20,7 @@ Sequel.migration do
       String :id, primary_key: true
       foreign_key :workspace_id, :workspaces, type: String, null: false, on_delete: :restrict
       String :display_name, null: false
-      String :email, collate: "NOCASE"
+      column :email, "citext"
       String :job_title
       String :role, null: false
       String :status, null: false, default: "active"

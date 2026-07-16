@@ -16,15 +16,8 @@ else
 fi
 
 RUBY_BIN="${RUBY_BIN:-$DEFAULT_RUBY_BIN}"
-SYSTEM_GEM_PATH="$($RUBY_BIN -rrubygems -e 'print Gem.path.join(":")')"
-
-export GEM_HOME="$ROOT/vendor/gems"
-export GEM_PATH="$GEM_HOME:$SYSTEM_GEM_PATH"
-export PATH="$ROOT/vendor/bin:$(dirname "$RUBY_BIN"):$PATH"
+BUNDLE_BIN="$(dirname "$RUBY_BIN")/bundle"
+export PATH="$(dirname "$RUBY_BIN"):$PATH"
 
 cd "$ROOT"
-if [ -x "$ROOT/vendor/bin/rackup" ]; then
-  exec "$ROOT/vendor/bin/rackup" --server webrick --port "${PORT:-9292}" config.ru
-else
-  exec "$RUBY_BIN" -S bundle exec rackup --server webrick --port "${PORT:-9292}" config.ru
-fi
+exec "$BUNDLE_BIN" exec rackup --server webrick --port "${PORT:-9292}" config.ru

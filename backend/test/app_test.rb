@@ -1,17 +1,27 @@
 # frozen_string_literal: true
 
-require "fileutils"
 require "json"
 require "minitest/autorun"
 require "rack/test"
+require "uri"
 
-TEST_DATABASE_PATH = File.expand_path("../tmp/holocron-test.sqlite3", __dir__)
-FileUtils.mkdir_p(File.dirname(TEST_DATABASE_PATH))
-FileUtils.rm_f(TEST_DATABASE_PATH)
-ENV["DATABASE_URL"] = "sqlite://#{TEST_DATABASE_PATH}"
+TEST_DATABASE_URL = ENV.fetch("TEST_DATABASE_URL", "postgres://localhost:5432/holocron_test")
+test_database_name = URI.parse(TEST_DATABASE_URL).path.delete_prefix("/")
+raise "TEST_DATABASE_URL must target a database ending in _test." unless test_database_name.end_with?("_test")
+
+ENV["DATABASE_URL"] = TEST_DATABASE_URL
+ENV["AI_REQUEST_EXTRACTION_PROVIDER"] = "fake"
+ENV["AI_REQUEST_EXTRACTION_MODEL"] = "fake-request-extractor-v1"
+ENV["AI_BRIEFING_GENERATION_PROVIDER"] = "fake"
+ENV["AI_BRIEFING_GENERATION_MODEL"] = "fake-briefing-generator-v1"
 
 require_relative "../app"
 
+actual_database_name = Holocron::Database.db.get(Sequel.function(:current_database))
+raise "Refusing to reset non-test database #{actual_database_name}." unless actual_database_name == test_database_name
+
+Holocron::Database.db.run("DROP SCHEMA public CASCADE")
+Holocron::Database.db.run("CREATE SCHEMA public")
 Holocron::Database.migrate!
 load File.expand_path("../db/seeds.rb", __dir__)
 

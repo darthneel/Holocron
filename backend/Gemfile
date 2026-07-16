@@ -6,7 +6,7 @@ gem "rackup"
 gem "rake"
 gem "roda"
 gem "sequel"
-gem "sqlite3"
+gem "pg"
 gem "webrick"
 
 group :test do

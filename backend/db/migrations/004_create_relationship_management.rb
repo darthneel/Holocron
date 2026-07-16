@@ -9,7 +9,7 @@ Sequel.migration do
       foreign_key :workspace_id, :workspaces, type: String, null: false, on_delete: :restrict
       foreign_key :created_by_workspace_member_id, :workspace_members, type: String, null: false, on_delete: :restrict
       String :display_name, null: false
-      String :primary_email, collate: "NOCASE"
+      column :primary_email, "citext"
       String :primary_phone
       String :notes, text: true
       DateTime :created_at, null: false

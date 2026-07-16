@@ -13,14 +13,14 @@ flowchart LR
     Foundation[GET /api/foundation]
     Roda[Roda routing and validation]
     Sequel[Sequel datasets]
-    SQLite[(SQLite)]
+    PostgreSQL[(PostgreSQL)]
 
     Browser --> Session
     Browser --> Foundation
     Session --> Roda
     Foundation --> Roda
     Roda --> Sequel
-    Sequel --> SQLite
+    Sequel --> PostgreSQL
 ```
 
 ## Email Entry Lifecycle
@@ -41,12 +41,14 @@ Roda was selected over Sinatra because both are small Rack applications, while
 Roda's routing tree keeps endpoint matching explicit as the API grows. Sequel is
 maintained by the same author and keeps migrations and queries close to SQL.
 
-## Local Database Decision
+## Database Decision
 
-SQLite keeps the project runnable without a database service. UUID, enum,
-case-insensitive email, and JSON values are represented as constrained text.
-The logical PostgreSQL types remain documented in the ERD so a future migration
-does not need to rediscover the intended model.
+PostgreSQL is the development, test, and deployment database. Sequel keeps the
+application queries adapter-focused while PostgreSQL `citext` preserves
+case-insensitive identity matching and uniqueness. The initial engine migration
+deliberately leaves UUID and JSON payload values as validated text; native UUID
+and `jsonb` storage can be introduced separately without coupling that type
+conversion to the runtime cutover.
 
 ## Step 2 Scheduling Request Lifecycle
 
@@ -55,7 +57,7 @@ sequenceDiagram
     participant Browser
     participant API as Roda API
     participant Domain as SchedulingRequests
-    participant DB as SQLite
+    participant DB as PostgreSQL
 
     Browser->>API: POST /api/scheduling-requests + actor header
     API->>API: Parse JSON and resolve active actor
@@ -80,7 +82,7 @@ sequenceDiagram
     participant Browser
     participant API as Roda API
     participant Workflow as SchedulingRequestWorkflow
-    participant DB as SQLite
+    participant DB as PostgreSQL
 
     Browser->>API: POST transition + actor + expected lock version
     API->>Workflow: Resolve actor and pass command
@@ -109,7 +111,7 @@ sequenceDiagram
     participant API as Roda API
     participant Requests as SchedulingRequests
     participant Relations as Relationships
-    participant DB as SQLite
+    participant DB as PostgreSQL
 
     Browser->>API: Create or edit scheduling request
     API->>Requests: Validated request command and actor
@@ -145,7 +147,7 @@ sequenceDiagram
     participant API as Roda API
     participant Briefings as Briefings service
     participant Relations as Relationship context
-    participant DB as SQLite
+    participant DB as PostgreSQL
 
     Browser->>API: Create meeting for scheduled request
     API->>Briefings: Actor, request, confirmed time, and location
@@ -189,7 +191,7 @@ sequenceDiagram
     participant Router as ModelRouter
     participant Model as Fake or hosted Responses gateway
     participant Requests as SchedulingRequests
-    participant DB as SQLite
+    participant DB as PostgreSQL
 
     Staff->>API: POST pasted email + development actor
     API->>Extract: Extract untrusted input
@@ -238,7 +240,7 @@ sequenceDiagram
     participant Context as BriefingContextAssembler
     participant Router as ModelRouter
     participant Model as Fake or Vercel Responses API
-    participant DB as SQLite
+    participant DB as PostgreSQL
 
     Staff->>API: POST /api/scheduling-requests/:id/meeting + actor
     API->>Briefings: Create meeting and fallback briefing

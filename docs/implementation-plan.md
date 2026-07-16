@@ -44,8 +44,8 @@ After every step, produce:
 
 ### Data
 
-- SQLite during early local development
-- Logical schema documented with PostgreSQL-oriented types
+- PostgreSQL for development, tests, and deployment
+- Logical schema documented with PostgreSQL-native target types
 - UUID identifiers
 - Explicit foreign keys, constraints, and append-only audit history
 

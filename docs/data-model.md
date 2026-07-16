@@ -289,12 +289,13 @@ erDiagram
     BRIEFING_VERSIONS ||--o{ BRIEFING_SECTIONS : contains
 ```
 
-SQLite stores UUID, enum, `citext`, and `jsonb` values as validated text in the
-local development database. The logical types in this document are the intended
-PostgreSQL representation. Each briefing section stores an ordered JSON array
-of validated source snapshots. Every snapshot contains a source type and ID plus
-the copied label and excerpt, so the version remains understandable if the live
-record later changes. A version's optional review decision, notes, reviewer, and
+PostgreSQL stores case-insensitive slugs and emails as `citext`. During the
+initial engine migration, UUIDs, enums, and JSON payloads remain application-
+validated text even where this logical model shows their intended native
+PostgreSQL types. Each briefing section stores an ordered JSON array of validated
+source snapshots. Every snapshot contains a source type and ID plus the copied
+label and excerpt, so the version remains understandable if the live record
+later changes. A version's optional review decision, notes, reviewer, and
 timestamp live on the version itself because only one decision is allowed for
 each immutable version.
 

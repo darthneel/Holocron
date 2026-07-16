@@ -19,4 +19,4 @@ Step 4 turns request intake into reusable relationship context.
 
 The relationship write APIs require the development actor header. People,
 organizations, interactions, request links, and audit events commit
-synchronously through SQLite transactions.
+synchronously through PostgreSQL transactions.

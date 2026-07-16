@@ -26,10 +26,8 @@ else
 fi
 
 RUBY_BIN="${RUBY_BIN:-$DEFAULT_RUBY_BIN}"
-SYSTEM_GEM_PATH="$($RUBY_BIN -rrubygems -e 'print Gem.path.join(":")')"
-
-export GEM_HOME="$ROOT/vendor/gems"
-export GEM_PATH="$GEM_HOME:$SYSTEM_GEM_PATH"
+BUNDLE_BIN="$(dirname "$RUBY_BIN")/bundle"
+export PATH="$(dirname "$RUBY_BIN"):$PATH"
 
 cd "$ROOT"
-exec "$RUBY_BIN" -Ieval eval/briefing_generation_eval_test.rb "$@"
+exec "$BUNDLE_BIN" exec "$RUBY_BIN" -Ieval eval/briefing_generation_eval_test.rb "$@"

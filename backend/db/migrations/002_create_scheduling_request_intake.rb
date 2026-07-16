@@ -9,7 +9,7 @@ Sequel.migration do
       foreign_key :assigned_scheduler_member_id, :workspace_members, type: String, null: false, on_delete: :restrict
       foreign_key :created_by_workspace_member_id, :workspace_members, type: String, null: false, on_delete: :restrict
       String :requester_name, null: false
-      String :requester_email, collate: "NOCASE"
+      column :requester_email, "citext"
       String :requester_organization
       String :purpose, text: true, null: false
       Integer :requested_duration_minutes, null: false
@@ -30,7 +30,7 @@ Sequel.migration do
       String :id, primary_key: true
       foreign_key :scheduling_request_id, :scheduling_requests, type: String, null: false, on_delete: :cascade
       String :name, null: false
-      String :email, collate: "NOCASE"
+      column :email, "citext"
       String :organization
       String :role, null: false
       DateTime :created_at, null: false
