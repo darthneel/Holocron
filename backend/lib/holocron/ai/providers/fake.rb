@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "date"
+require "json"
 
 module Holocron
   module AI
@@ -14,7 +15,7 @@ module Holocron
           @calls = 0
         end
 
-        def generate(prompt:, schema:)
+        def generate(prompt:, schema:, **_options)
           @calls += 1
           input = prompt.fetch(:input)
           raise RefusalError, "Deterministic fake refusal." if input.include?("[fake:refusal]")
@@ -22,6 +23,7 @@ module Holocron
             raise TransientError, "Deterministic fake transient failure."
           end
           return {output: {"requester" => "malformed"}, model: model} if input.include?("[fake:malformed]")
+          return generate_briefing(input) if prompt[:task] == "briefing_generation"
 
           headers = parse_headers(input)
           requester = parse_identity(headers["from"])
@@ -58,6 +60,85 @@ module Holocron
         end
 
         private
+
+        def generate_briefing(input)
+          manifest = JSON.parse(input)
+          sources = manifest.fetch("sources")
+          request = sources.find { |source| source["source_type"] == "scheduling_request" }
+          meeting = sources.find { |source| source["source_type"] == "meeting" }
+          people = sources.select { |source| source["source_type"] == "person" }
+          organizations = sources.select { |source| source["source_type"] == "organization" }
+          prior_interactions = sources.select do |source|
+            source["source_type"] == "interaction" && !source.dig("facts", "current_request")
+          end
+
+          purpose = request&.dig("facts", "purpose")
+          duration = request&.dig("facts", "requested_duration_minutes")
+          overview_lines = []
+          overview_lines << purpose if purpose
+          overview_lines << "Requested duration: #{duration} minutes." if duration
+          attendee_lines = people.map do |person|
+            facts = person.fetch("facts")
+            context = [facts["job_title"], facts["organization_name"]].compact.join(", ")
+            roles = facts.fetch("request_roles", []).map { |role| humanize(role) }.join(" / ")
+            suffix = context.empty? ? "" : " - #{context}"
+            role_suffix = roles.empty? ? "" : " (#{roles})"
+            "#{facts.fetch('display_name')}#{suffix}#{role_suffix}"
+          end
+          relationship_lines = people.filter_map do |person|
+            facts = person.fetch("facts")
+            details = [facts["job_title"], facts["organization_name"], facts["notes"]].compact
+            next if details.empty?
+
+            "#{facts.fetch('display_name')}: #{details.join('; ')}"
+          end
+          history_lines = prior_interactions.map do |interaction|
+            facts = interaction.fetch("facts")
+            "#{facts.fetch('occurred_at')[0, 10]} - #{facts.fetch('summary')}"
+          end
+          meeting_facts = meeting&.fetch("facts", {}) || {}
+          logistics_lines = []
+          logistics_lines << "Starts: #{meeting_facts['starts_at']}" if meeting_facts["starts_at"]
+          logistics_lines << "Ends: #{meeting_facts['ends_at']}" if meeting_facts["ends_at"]
+          logistics_lines << "Location: #{meeting_facts['location'] || 'Not specified'}" if meeting
+
+          organization_refs = organizations.filter_map do |organization|
+            person_organization_ids = people.filter_map { |person| person.dig("facts", "organization_id") }
+            organization["source_ref"] if person_organization_ids.include?(organization["source_id"])
+          end
+          people_refs = people.map { |person| person.fetch("source_ref") }
+          interaction_refs = prior_interactions.map { |interaction| interaction.fetch("source_ref") }
+          sections = [
+            fake_section("overview", "Meeting overview", overview_lines, request && [request.fetch("source_ref")]),
+            fake_section("attendees", "Attendees", attendee_lines, people_refs + organization_refs),
+            fake_section("relationship_context", "Relationship context", relationship_lines, people_refs + organization_refs),
+            fake_section("prior_history", "Prior history", history_lines, interaction_refs),
+            fake_section(
+              "objectives",
+              "Objectives and talking points",
+              purpose ? ["Discuss #{purpose}", "Identify decisions, owners, and next steps."] : [],
+              request && [request.fetch("source_ref")]
+            ),
+            fake_section("logistics", "Logistics", logistics_lines, meeting && [meeting.fetch("source_ref")])
+          ]
+
+          {
+            output: {"sections" => sections, "limitations" => manifest.fetch("limitations", [])},
+            model: model,
+            provider_request_id: "fake-#{@calls}",
+            input_tokens: input.split.length,
+            output_tokens: sections.sum { |section| section.fetch("body").split.length }
+          }
+        end
+
+        def fake_section(type, title, lines, refs)
+          {
+            "section_type" => type,
+            "title" => title,
+            "body" => Array(lines).compact.join("\n"),
+            "source_refs" => Array(refs).compact.uniq.first(25)
+          }
+        end
 
         def parse_headers(input)
           input.each_line.each_with_object({}) do |line, result|
@@ -124,6 +205,10 @@ module Holocron
         def clean(value)
           text = value.to_s.strip
           text.empty? ? nil : text
+        end
+
+        def humanize(value)
+          value.to_s.split("_").map(&:capitalize).join(" ")
         end
       end
     end

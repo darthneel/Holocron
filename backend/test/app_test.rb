@@ -236,6 +236,36 @@ class HolocronAppTest < Minitest::Test
     assert_equal 4, result.fetch(:output_tokens)
   end
 
+  def test_model_router_retries_a_response_without_structured_output
+    calls = 0
+    transport = lambda do |_uri, _body, _headers|
+      calls += 1
+      output = if calls == 1
+        []
+      else
+        [{type: "message", content: [{type: "output_text", text: JSON.generate("ok" => true)}]}]
+      end
+      {status: 200, body: JSON.generate(id: "resp_#{calls}", model: "gpt-test", output: output)}
+    end
+    provider = Holocron::AI::Providers::Responses.new(
+      name: "vercel",
+      endpoint: "https://ai-gateway.vercel.sh/v1/responses",
+      api_key: "test-key",
+      model: "gpt-test",
+      transport: transport
+    )
+    router = Holocron::AI::ModelRouter.new(provider: provider, task: :briefing_generation)
+
+    result = router.briefing_generation(
+      prompt: {instructions: "Return output.", input: "Context"},
+      schema: {"type" => "object"}
+    )
+
+    assert_equal "succeeded", result.status
+    assert_equal 2, result.attempt_count
+    assert_equal({"ok" => true}, result.output)
+  end
+
   def test_model_router_selects_vercel_gateway_configuration
     keys = %w[AI_REQUEST_EXTRACTION_PROVIDER AI_REQUEST_EXTRACTION_MODEL AI_GATEWAY_API_KEY]
     original = keys.to_h { |key| [key, ENV[key]] }
@@ -583,6 +613,191 @@ class HolocronAppTest < Minitest::Test
     assert_includes parsed_response.fetch("briefings").map { |entry| entry.fetch("id") }, briefing.fetch("id")
   end
 
+  def test_grounded_generation_appends_a_cited_draft_version
+    briefing = create_briefing(isolated_request_overrides("generation"))
+    version_count = Holocron::Database.db[:briefing_versions].where(briefing_id: briefing.fetch("id")).count
+    audit_count = Holocron::Database.db[:audit_events].count
+
+    post_json "/api/briefings/#{briefing.fetch('id')}/generate", {
+      expected_lock_version: briefing.fetch("lock_version")
+    }, actor_headers
+
+    assert last_response.ok?
+    generated = parsed_response
+    assert_equal 2, generated.fetch("current_version_number")
+    assert_equal 2, generated.fetch("lock_version")
+    assert_equal "draft", generated.fetch("status")
+    assert_equal version_count + 1, Holocron::Database.db[:briefing_versions].where(briefing_id: briefing.fetch("id")).count
+
+    version = generated.fetch("versions").find { |candidate| candidate.fetch("version_number") == 2 }
+    assert_equal "AI-generated draft from grounded workspace context.", version.fetch("change_summary")
+    section_types = version.fetch("sections").map { |section| section.fetch("section_type") }
+    assert_equal %w[overview attendees relationship_context prior_history objectives logistics notes], section_types
+    material_sections = version.fetch("sections").reject { |section| section.fetch("section_type") == "notes" }
+    material_sections.select { |section| !section.fetch("body").empty? }.each do |section|
+      refute_empty section.fetch("sources"), "#{section.fetch('section_type')} should be cited"
+    end
+    logistics = version.fetch("sections").find { |section| section.fetch("section_type") == "logistics" }
+    assert_equal ["meeting"], logistics.fetch("sources").map { |source| source.fetch("source_type") }.uniq
+    assert_includes version.fetch("sections").last.fetch("body"), "No prior interaction history"
+    assert_includes generated.fetch("source_catalog").map { |source| source.fetch("source_type") }, "meeting"
+
+    audit = Holocron::Database.db[:audit_events].where(
+      event_type: "briefing.generated",
+      subject_id: briefing.fetch("id")
+    ).first
+    refute_nil audit
+    payload = JSON.parse(audit.fetch(:payload))
+    assert_equal "fake", payload.fetch("provider")
+    assert_equal "grounded-briefing-v1", payload.fetch("prompt_version")
+    assert_equal 2, payload.fetch("version_number")
+    assert_operator payload.dig("retrieval", "source_count"), :>=, 4
+    assert_equal audit_count + 1, Holocron::Database.db[:audit_events].count
+  end
+
+  def test_grounded_generation_caps_prior_interactions_per_person
+    briefing = create_briefing(isolated_request_overrides("interaction-cap"))
+    db = Holocron::Database.db
+    workspace = db[:workspaces].first
+    actor = db[:workspace_members].where(workspace_id: workspace[:id], email: "neelp22@gmail.com").first
+    request_id = briefing.dig("meeting", "scheduling_request_id")
+    requester = db[:scheduling_request_people]
+      .where(scheduling_request_id: request_id, role: "requester")
+      .first
+
+    7.times do |index|
+      occurred_at = Time.iso8601("2026-01-#{format('%02d', index + 1)}T12:00:00Z")
+      db[:interactions].insert(
+        id: SecureRandom.uuid,
+        workspace_id: workspace[:id],
+        person_id: requester.fetch(:person_id),
+        scheduling_request_id: nil,
+        authored_by_workspace_member_id: actor[:id],
+        interaction_type: "note",
+        summary: "Prior interaction #{index + 1}",
+        source_type: "manual",
+        source_id: nil,
+        occurred_at: occurred_at,
+        created_at: occurred_at,
+        updated_at: occurred_at
+      )
+    end
+
+    stored_briefing = db[:briefings].where(id: briefing.fetch("id")).first
+    manifest = Holocron::BriefingContextAssembler.new(workspace: workspace).call(briefing: stored_briefing)
+    prior_sources = manifest.fetch("sources").select do |source|
+      source.fetch("source_type") == "interaction" && !source.dig("facts", "current_request")
+    end
+
+    assert_equal 5, prior_sources.length
+    assert_equal 2, manifest.dig("retrieval", "interactions_omitted")
+    assert_includes manifest.fetch("limitations"), "2 interactions were omitted by recency or context limits."
+  end
+
+  def test_invalid_generated_citations_are_audited_but_not_persisted
+    briefing = create_briefing
+    db = Holocron::Database.db
+    workspace = db[:workspaces].first
+    actor = db[:workspace_members].where(workspace_id: workspace[:id], email: "neelp22@gmail.com").first
+    version_count = db[:briefing_versions].where(briefing_id: briefing.fetch("id")).count
+    provider_class = Struct.new(:name, :model) do
+      def generate(prompt:, schema:, **_options)
+        section_types = %w[overview attendees relationship_context prior_history objectives logistics]
+        {
+          output: {
+            "sections" => section_types.map do |section_type|
+              {
+                "section_type" => section_type,
+                "title" => section_type,
+                "body" => "Unsupported generated claim.",
+                "source_refs" => ["SRC-999"]
+              }
+            end,
+            "limitations" => []
+          },
+          model: model,
+          provider_request_id: "invalid-citation-test"
+        }
+      end
+    end
+    router = Holocron::AI::ModelRouter.new(
+      provider: provider_class.new("test", "test-model"),
+      task: :briefing_generation
+    )
+
+    error = assert_raises(Holocron::Briefings::GenerationError) do
+      Holocron::Briefings.generate_version(
+        id: briefing.fetch("id"),
+        attributes: {"expected_lock_version" => briefing.fetch("lock_version")},
+        workspace: workspace,
+        actor: actor,
+        router: router
+      )
+    end
+
+    assert_match(/grounded briefing validation/, error.message)
+    assert_equal version_count, db[:briefing_versions].where(briefing_id: briefing.fetch("id")).count
+    assert_equal briefing.fetch("lock_version"), db[:briefings].where(id: briefing.fetch("id")).get(:lock_version)
+    audit = db[:audit_events].where(
+      event_type: "briefing.generation_failed",
+      subject_id: briefing.fetch("id")
+    ).first
+    refute_nil audit
+    assert_equal "test", JSON.parse(audit.fetch(:payload)).fetch("provider")
+  end
+
+  def test_prior_history_rejects_the_current_request_interaction
+    briefing = create_briefing(isolated_request_overrides("prior-history"))
+    db = Holocron::Database.db
+    workspace = db[:workspaces].first
+    stored_briefing = db[:briefings].where(id: briefing.fetch("id")).first
+    manifest = Holocron::BriefingContextAssembler.new(workspace: workspace).call(briefing: stored_briefing)
+    current_interaction = manifest.fetch("sources").find do |source|
+      source.fetch("source_type") == "interaction" && source.dig("facts", "current_request")
+    end
+    output = {
+      "sections" => %w[overview attendees relationship_context prior_history objectives logistics].map do |section_type|
+        current_history = section_type == "prior_history"
+        {
+          "section_type" => section_type,
+          "title" => section_type,
+          "body" => current_history ? "The request arrived for this meeting." : "",
+          "source_refs" => current_history ? [current_interaction.fetch("source_ref")] : []
+        }
+      end,
+      "limitations" => []
+    }
+
+    _sections, errors = Holocron::BriefingGeneration.normalize_output(output, manifest: manifest)
+
+    assert_equal(
+      "Prior history may cite only interactions from before the current request.",
+      errors.fetch("sections.3.source_refs")
+    )
+  end
+
+  def test_briefing_generation_configuration_failure_returns_an_outcome
+    keys = %w[AI_BRIEFING_GENERATION_PROVIDER AI_BRIEFING_GENERATION_MODEL]
+    original = keys.to_h { |key| [key, ENV[key]] }
+    ENV["AI_BRIEFING_GENERATION_PROVIDER"] = "unsupported"
+    ENV["AI_BRIEFING_GENERATION_MODEL"] = "unsupported-model"
+
+    outcome = Holocron::BriefingGeneration.generate(manifest: {
+      "context_version" => "briefing-context-v1",
+      "sources" => [],
+      "limitations" => []
+    })
+
+    assert_equal "failed", outcome.status
+    assert_equal "unsupported", outcome.provider
+    assert_equal "unsupported-model", outcome.model
+    assert_match(/Unsupported briefing generation provider/, outcome.failure_reason)
+  ensure
+    original&.each do |key, value|
+      value ? ENV[key] = value : ENV.delete(key)
+    end
+  end
+
   def test_unscheduled_request_cannot_create_a_meeting_or_partial_briefing
     created = create_scheduling_request
     meeting_count = Holocron::Database.db[:meetings].count
@@ -776,8 +991,8 @@ class HolocronAppTest < Minitest::Test
     {"HTTP_X_HOLOCRON_ACTOR_EMAIL" => "neelp22@gmail.com"}
   end
 
-  def create_scheduling_request
-    post_json "/api/scheduling-requests", scheduling_request_payload, actor_headers
+  def create_scheduling_request(overrides = {})
+    post_json "/api/scheduling-requests", scheduling_request_payload(overrides), actor_headers
     assert_equal 201, last_response.status
     parsed_response
   end
@@ -791,8 +1006,8 @@ class HolocronAppTest < Minitest::Test
     }
   end
 
-  def create_scheduled_request
-    created = create_scheduling_request
+  def create_scheduled_request(overrides = {})
+    created = create_scheduling_request(overrides)
     request_id = created.fetch("id")
     [
       ["under_review", "review_started", 1],
@@ -809,8 +1024,8 @@ class HolocronAppTest < Minitest::Test
     parsed_response
   end
 
-  def create_briefing
-    scheduled = create_scheduled_request
+  def create_briefing(overrides = {})
+    scheduled = create_scheduled_request(overrides)
     post_json "/api/scheduling-requests/#{scheduled.fetch("id")}/meeting", meeting_payload, actor_headers
     assert_equal 201, last_response.status
     parsed_response
@@ -822,6 +1037,22 @@ class HolocronAppTest < Minitest::Test
       starts_at: "2026-08-11T14:00:00-06:00",
       ends_at: "2026-08-11T14:45:00-06:00",
       location: "City Hall - Conference Room A"
+    }
+  end
+
+  def isolated_request_overrides(label)
+    token = SecureRandom.hex(4)
+    organization = "#{label} organization #{token}"
+    {
+      requester_name: "#{label} requester",
+      requester_email: "#{label}-#{token}@example.org",
+      requester_organization: organization,
+      participants: [{
+        name: "#{label} participant",
+        email: "#{label}-participant-#{token}@example.org",
+        organization: organization,
+        role: "required"
+      }]
     }
   end
 

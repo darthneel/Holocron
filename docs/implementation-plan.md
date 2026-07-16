@@ -370,7 +370,7 @@ Completion gate met:
 
 ## Step 7: Grounded Briefing Generation
 
-**Status: Pending**
+**Status: Complete**
 
 Generate a briefing draft from permitted workspace records.
 
@@ -382,6 +382,32 @@ Implement:
 - Source citations for material generated claims
 - Unsupported-claim detection
 - Human editing and approval
+
+Implemented:
+
+- `BriefingContextAssembler` anchors retrieval to a workspace-scoped briefing,
+  meeting, and scheduling request, then follows explicit request-person links.
+- Linked people are role ordered and capped at 12. Current-request interactions
+  are selected first, prior interactions are capped at five per person, and a
+  round-robin global cap prevents one attendee from consuming the context.
+- The bounded manifest assigns stable `SRC-nnn` handles to request, meeting,
+  person, organization, and interaction snapshots. Omitted or absent context is
+  represented as an explicit limitation.
+- `BriefingGeneration` sends the manifest through the task-specific model router
+  with a strict schema and medium reasoning. The recommended hosted model is
+  `openai/gpt-5.6-terra` through Vercel AI Gateway; local and tests use the fake
+  generator.
+- Deterministic validation rejects missing sections, duplicate section types,
+  uncited material sections, unknown source handles, and source types that are
+  irrelevant to a section. `prior_history` additionally rejects interactions
+  sourced from the current scheduling request.
+- The model call runs outside the database transaction. The service rechecks the
+  expected briefing lock before appending the immutable draft version, source
+  snapshots, projection update, and synchronous audit in one transaction.
+- After meeting creation commits a deterministic version 1, the browser
+  automatically requests grounded generation as a separate command. Failure
+  preserves the editable fallback; the workbench offers generation or
+  regeneration before reusing the Step 5 editing, review, and approval lifecycle.
 
 Architectural lesson:
 
@@ -395,6 +421,19 @@ Completion gate:
 - Records outside the current workspace never enter model context.
 - Missing context produces a visible limitation rather than an invented claim.
 - Evaluation fixtures measure faithfulness and citation correctness.
+
+Completion gate met:
+
+- Every non-empty material section must contain one or more allowlisted source
+  snapshots before it can be stored.
+- Every context query scopes workspace-owned records by `workspace_id`; an
+  unscoped request-person link cannot pull a foreign person into the manifest.
+- Missing prior history and context-limit omissions render in a visible `Known
+  limitations` section.
+- Deterministic tests cover cited generation, retrieval limits, malformed
+  citations, immutable persistence, and synchronous success/failure audits. A
+  separate three-case live eval checks faithfulness, citation types, missing
+  history, and instruction-shaped context.
 
 ## Step 8: Durable Agent Execution
 

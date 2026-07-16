@@ -227,3 +227,85 @@ The service ignores client changes to source provenance and forces `email` plus
 the extraction's retained original text. It atomically links the extraction,
 creates canonical relationship context, initializes workflow history, and writes
 synchronous audit events. A unique link and conditional update prevent replay.
+
+## Step 7 Grounded Briefing Generation Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant Staff as Staff browser
+    participant API as Roda API
+    participant Briefings as Briefings service
+    participant Context as BriefingContextAssembler
+    participant Router as ModelRouter
+    participant Model as Fake or Vercel Responses API
+    participant DB as SQLite
+
+    Staff->>API: POST /api/scheduling-requests/:id/meeting + actor
+    API->>Briefings: Create meeting and fallback briefing
+    Briefings->>DB: Commit meeting, briefing, deterministic v1, and audits
+    Briefings-->>API: Created briefing with current lock
+    API-->>Staff: Meeting and fallback draft created
+    Staff->>API: Automatically POST /api/briefings/:id/generate + actor + lock
+    API->>Briefings: Generate version command
+    Briefings->>DB: Load briefing by ID and workspace
+    Briefings->>Briefings: Verify status and expected lock
+    Briefings->>Context: Assemble bounded context
+    Context->>DB: Load workspace meeting and request
+    Context->>DB: Traverse request-person links
+    Context->>DB: Load scoped organizations
+    Context->>DB: Load current + capped prior interactions per person
+    Context->>Context: Role order, round-robin, budget, assign SRC-nnn
+    Context-->>Briefings: Manifest + retrieval counts + limitations
+    Briefings->>Router: Versioned prompt + strict section schema
+    Router->>Model: Synchronous structured-output call
+    Model-->>Router: Sections + source_refs + limitations
+    Router-->>Briefings: Provider result and usage
+    Briefings->>Briefings: Validate shape, citations, and source relevance
+    alt Provider or validation failure
+        Briefings->>DB: Write synchronous generation_failed audit
+        Briefings-->>API: 502 without a new version
+    else Valid grounded output
+        Briefings->>DB: Begin transaction and reload briefing
+        Briefings->>Briefings: Recheck status and expected lock
+        Briefings->>DB: Advance projection and append immutable version
+        Briefings->>DB: Store section source snapshots and generated audit
+        Briefings->>DB: Commit transaction
+        Briefings-->>API: New editable draft version
+    end
+    API-->>Staff: Generated briefing or actionable error with fallback preserved
+```
+
+The browser treats scheduling and first generation as one continuous user action,
+but they remain two API commands. Meeting creation commits a deterministic version
+1 before the model is called. The returned briefing ID and lock are then used for
+an automatic generation request. A failed or interrupted generation therefore
+leaves a valid meeting and editable fallback draft; staff can retry with
+`Generate draft`. This browser-triggered follow-up is intentionally simple until
+Step 8 introduces durable asynchronous execution.
+
+Retrieval is deterministic and relational. The model never receives database
+credentials and never chooses records. The request-person join is the attendee
+allowlist; organizations can enter only through selected people, and interactions
+must match both the workspace and one of those people. Request and meeting records
+are loaded independently with the same workspace boundary.
+
+Context is deliberately bounded. At most 12 linked people are selected. Each
+person contributes up to two current-request interactions and five prior
+interactions, with a 15-interaction global cap applied round-robin across people.
+The manifest records omission counts and turns missing prior history into a
+visible limitation. Each selected record receives a stable `SRC-nnn` handle and
+includes the label, excerpt, and structured facts supplied to the model.
+
+The model call happens before the write transaction. Once output passes the
+strict response schema, application validation rejects unknown source handles,
+uncited non-empty sections, duplicate or missing section types, and citations
+whose record type is irrelevant to the section. Prior history may cite only
+interactions marked as occurring before the current request. Citations are
+converted back to source snapshots; model-provided database IDs are never trusted.
+
+The service then opens a short transaction and rechecks `lock_version`. A valid
+response therefore cannot overwrite a human edit made while the model was
+running. Success advances the briefing projection, appends a complete immutable
+draft version, stores source snapshots with each section, and writes the audit
+event atomically. Provider and validation failures create no briefing version and
+write a separate synchronous failure audit.

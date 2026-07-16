@@ -930,29 +930,36 @@ export default function Home() {
     }
   }
 
+  async function sendBriefingCommand(path: string, payload: Record<string, unknown>) {
+    if (!session) throw new Error("Sign in before updating a briefing.");
+
+    const response = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Holocron-Actor-Email": session.email,
+      },
+      body: JSON.stringify(payload),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      if (response.status === 409 && selectedBriefing) await selectBriefing(selectedBriefing.id);
+      const detail = body.fields ? Object.values(body.fields).join(" ") : body.error;
+      throw new Error(detail ?? "Unable to update briefing.");
+    }
+
+    setSelectedBriefing(body);
+    await loadWorkspace();
+    return body as BriefingDetail;
+  }
+
   async function briefingCommand(path: string, payload: Record<string, unknown>) {
     if (!session) return false;
 
     setIsBriefingSaving(true);
     setError("");
     try {
-      const response = await fetch(`${API_URL}${path}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Holocron-Actor-Email": session.email,
-        },
-        body: JSON.stringify(payload),
-      });
-      const body = await response.json();
-      if (!response.ok) {
-        if (response.status === 409 && selectedBriefing) await selectBriefing(selectedBriefing.id);
-        const detail = body.fields ? Object.values(body.fields).join(" ") : body.error;
-        throw new Error(detail ?? "Unable to update briefing.");
-      }
-
-      setSelectedBriefing(body);
-      await loadWorkspace();
+      await sendBriefingCommand(path, payload);
       return true;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to update briefing.");
@@ -963,17 +970,45 @@ export default function Home() {
   }
 
   async function createMeetingAndBriefing(payload: Record<string, unknown>) {
-    if (!selectedRequest) return false;
-    const succeeded = await briefingCommand(`/api/scheduling-requests/${selectedRequest.id}/meeting`, payload);
-    if (succeeded) {
+    if (!selectedRequest || !session) return false;
+
+    setIsBriefingSaving(true);
+    setError("");
+    try {
+      const createdBriefing = await sendBriefingCommand(
+        `/api/scheduling-requests/${selectedRequest.id}/meeting`,
+        payload,
+      );
       window.setTimeout(() => document.getElementById("briefings")?.scrollIntoView({behavior: "smooth"}), 0);
+
+      try {
+        await sendBriefingCommand(`/api/briefings/${createdBriefing.id}/generate`, {
+          expected_lock_version: createdBriefing.lock_version,
+        });
+      } catch (generationError) {
+        const detail = generationError instanceof Error ? generationError.message : "Unable to generate the briefing.";
+        setError(`Meeting created with a fallback draft. Automatic briefing generation failed: ${detail}`);
+      }
+
+      return true;
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to create the meeting.");
+      return false;
+    } finally {
+      setIsBriefingSaving(false);
     }
-    return succeeded;
   }
 
   async function saveBriefingVersion(payload: Record<string, unknown>) {
     if (!selectedBriefing) return false;
     return briefingCommand(`/api/briefings/${selectedBriefing.id}/versions`, payload);
+  }
+
+  async function generateBriefing() {
+    if (!selectedBriefing) return false;
+    return briefingCommand(`/api/briefings/${selectedBriefing.id}/generate`, {
+      expected_lock_version: selectedBriefing.lock_version,
+    });
   }
 
   async function submitBriefingForReview() {
@@ -1186,6 +1221,7 @@ export default function Home() {
             canMutate={canMutate}
             isSaving={isBriefingSaving}
             onSelect={selectBriefing}
+            onGenerate={generateBriefing}
             onSaveVersion={saveBriefingVersion}
             onSubmitReview={submitBriefingForReview}
             onReview={reviewBriefing}
@@ -1231,12 +1267,13 @@ export default function Home() {
   );
 }
 
-function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, onSelect, onSaveVersion, onSubmitReview, onReview }: {
+function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, onSelect, onGenerate, onSaveVersion, onSubmitReview, onReview }: {
   briefings: BriefingListItem[];
   selectedBriefing: BriefingDetail | null;
   canMutate: boolean;
   isSaving: boolean;
   onSelect: (id: string) => Promise<void>;
+  onGenerate: () => Promise<boolean>;
   onSaveVersion: (payload: Record<string, unknown>) => Promise<boolean>;
   onSubmitReview: () => Promise<boolean>;
   onReview: (decision: string, notes: string) => Promise<boolean>;
@@ -1257,6 +1294,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
   const viewingCurrentVersion = Boolean(
     viewedVersion && selectedBriefing && viewedVersion.version_number === selectedBriefing.current_version_number,
   );
+  const hasGeneratedCurrentVersion = currentVersion?.change_summary === "AI-generated draft from grounded workspace context.";
 
   async function select(id: string) {
     setMode("view");
@@ -1329,6 +1367,13 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
 
   async function submitForReview() {
     if (await onSubmitReview()) setViewedVersionNumber(null);
+  }
+
+  async function generateDraft() {
+    if (await onGenerate()) {
+      setMode("view");
+      setViewedVersionNumber(null);
+    }
   }
 
   async function decide(decision: string) {
@@ -1437,8 +1482,8 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
 
                   {canMutate && viewingCurrentVersion ? (
                     <div className="briefing-actions">
-                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={beginRevision}><Save aria-hidden="true" /><span>Edit as new version</span></button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}><Send aria-hidden="true" /><span>{isSaving ? "Submitting" : "Submit for review"}</span></button></> : null}
-                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <button className="primary-command" type="button" onClick={beginRevision}><Plus aria-hidden="true" /><span>Create revision</span></button> : null}
+                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={generateDraft} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : hasGeneratedCurrentVersion ? "Regenerate draft" : "Generate draft"}</span></button><button className="icon-text-button" type="button" onClick={beginRevision} disabled={isSaving}><Save aria-hidden="true" /><span>Edit as new version</span></button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}><Send aria-hidden="true" /><span>{isSaving ? "Submitting" : "Submit for review"}</span></button></> : null}
+                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <><button className="icon-text-button" type="button" onClick={generateDraft} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate revision"}</span></button><button className="primary-command" type="button" onClick={beginRevision} disabled={isSaving}><Plus aria-hidden="true" /><span>Create revision</span></button></> : null}
                       {selectedBriefing.status === "in_review" ? <div className="briefing-review-form"><Field label="Review notes"><textarea rows={2} value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} /></Field><div><button className="icon-text-button" type="button" onClick={() => decide("changes_requested")} disabled={isSaving || !reviewNotes.trim()}><XCircle aria-hidden="true" /><span>Request changes</span></button><button className="primary-command" type="button" onClick={() => decide("approved")} disabled={isSaving}><CheckCircle2 aria-hidden="true" /><span>{isSaving ? "Saving" : "Approve version"}</span></button></div></div> : null}
                     </div>
                   ) : null}

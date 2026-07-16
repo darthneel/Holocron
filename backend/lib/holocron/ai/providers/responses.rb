@@ -19,10 +19,14 @@ module Holocron
           @transport = transport || method(:perform_request)
         end
 
-        def generate(prompt:, schema:)
+        def generate(prompt:, schema:, schema_name: "structured_output", reasoning_effort: "low")
           raise ConfigurationError, "#{name} API key is not configured." if @api_key.empty?
 
-          response = @transport.call(@endpoint, request_body(prompt, schema), request_headers)
+          response = @transport.call(
+            @endpoint,
+            request_body(prompt, schema, schema_name: schema_name, reasoning_effort: reasoning_effort),
+            request_headers
+          )
           status = response.fetch(:status).to_i
           body = response.fetch(:body).to_s
           raise TransientError, provider_message(body, status) if status == 429 || status >= 500
@@ -34,7 +38,7 @@ module Holocron
           raise RefusalError, refusal.fetch("refusal", "The model refused this request.") if refusal
 
           output_text = content.find { |item| item["type"] == "output_text" }&.fetch("text", nil)
-          raise ProviderError, "#{name} returned no structured output." unless output_text
+          raise TransientError, "#{name} returned no structured output." unless output_text
 
           usage = payload.fetch("usage", {})
           {
@@ -48,7 +52,7 @@ module Holocron
 
         private
 
-        def request_body(prompt, schema)
+        def request_body(prompt, schema, schema_name:, reasoning_effort:)
           JSON.generate(
             model: model,
             input: [
@@ -61,11 +65,11 @@ module Holocron
                 content: [{type: "input_text", text: prompt.fetch(:input)}]
               }
             ],
-            reasoning: {effort: "low"},
+            reasoning: {effort: reasoning_effort},
             text: {
               format: {
                 type: "json_schema",
-                name: "request_extraction",
+                name: schema_name,
                 strict: true,
                 schema: schema
               }

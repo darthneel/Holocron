@@ -75,6 +75,10 @@ module Holocron
           end
 
           r.on String do |id|
+            r.post "generate" do
+              briefing_command(r, workspace, :generate_version, identifier: id)
+            end
+
             r.post "versions" do
               briefing_command(r, workspace, :create_version, identifier: id)
             end
@@ -541,6 +545,14 @@ module Holocron
     rescue Briefings::StateError => error
       response.status = 409
       {error: error.message, current_status: error.current_status}
+    rescue Briefings::GenerationError => error
+      response.status = 502
+      {
+        error: error.message,
+        provider: error.provider,
+        model: error.model,
+        validation_errors: error.validation_errors
+      }
     end
   end
 end

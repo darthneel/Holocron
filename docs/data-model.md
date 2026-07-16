@@ -1,4 +1,4 @@
-# Step 6 Data Model
+# Step 7 Data Model
 
 The project foundation models one leadership office per workspace. Each workspace
 has exactly one principal, represented both as a workspace member and as a
@@ -12,7 +12,9 @@ and interactions retain source and authorship. A scheduled request may produce
 one meeting and briefing. Briefing content is stored in immutable numbered
 versions with ordered sections, source snapshots, and per-version review
 decisions. Request extraction attempts sit outside the domain-write path until a
-staff member accepts one into at most one scheduling request.
+staff member accepts one into at most one scheduling request. Grounded generation
+reuses the briefing-version model and introduces no mutable generated-content
+table: an accepted model response is another immutable draft version.
 
 ```mermaid
 erDiagram
@@ -295,6 +297,13 @@ the copied label and excerpt, so the version remains understandable if the live
 record later changes. A version's optional review decision, notes, reviewer, and
 timestamp live on the version itself because only one decision is allowed for
 each immutable version.
+
+Step 7 expands the permitted source snapshot types to include `meeting` alongside
+`scheduling_request`, `person`, `organization`, and `interaction`. Generated
+section citations are resolved from temporary `SRC-nnn` manifest handles back to
+these snapshots before persistence. Provider, model, prompt/context versions,
+usage, retrieval counts, and success or failure are stored in synchronous audit
+payloads. Durable model-call records remain a Step 8 concern.
 
 `request_extractions.output` contains the deterministically validated proposal
 when extraction succeeds and may retain malformed output for diagnosis when it

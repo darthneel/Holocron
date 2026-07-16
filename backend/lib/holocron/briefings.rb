@@ -3,6 +3,8 @@
 require "json"
 require "securerandom"
 require "time"
+require_relative "briefing_context_assembler"
+require_relative "briefing_generation"
 require_relative "database"
 require_relative "relationships"
 
@@ -10,7 +12,7 @@ module Holocron
   module Briefings
     STATUSES = %w[draft in_review approved changes_requested].freeze
     SECTION_TYPES = %w[overview attendees relationship_context prior_history objectives logistics notes].freeze
-    SOURCE_TYPES = %w[scheduling_request person organization interaction].freeze
+    SOURCE_TYPES = %w[scheduling_request meeting person organization interaction].freeze
 
     class ValidationError < StandardError
       attr_reader :fields
@@ -38,6 +40,17 @@ module Holocron
       def initialize(message, current_status: nil)
         super(message)
         @current_status = current_status
+      end
+    end
+
+    class GenerationError < StandardError
+      attr_reader :provider, :model, :validation_errors
+
+      def initialize(message, provider:, model:, validation_errors: {})
+        super(message)
+        @provider = provider
+        @model = model
+        @validation_errors = validation_errors
       end
     end
 
@@ -185,6 +198,76 @@ module Holocron
             previous_version_number: briefing[:current_version_number],
             section_count: sections.length
           },
+          correlation_id: correlation_id,
+          occurred_at: now
+        )
+      end
+
+      fetch(id: id, workspace: workspace)
+    end
+
+    def generate_version(id:, attributes:, workspace:, actor:, router: nil)
+      expected = expected_lock_version(attributes)
+      db = Database.db
+      briefing = db[:briefings].where(id: id, workspace_id: workspace[:id]).first
+      return nil unless briefing
+
+      verify_lock!(briefing, expected)
+      ensure_editable!(briefing)
+      manifest = BriefingContextAssembler.new(workspace: workspace).call(briefing: briefing)
+      outcome = BriefingGeneration.generate(manifest: manifest, router: router)
+      unless outcome.status == "succeeded"
+        record_generation_failure(
+          briefing: briefing,
+          workspace: workspace,
+          actor: actor,
+          outcome: outcome,
+          manifest: manifest
+        )
+        raise GenerationError.new(
+          outcome.failure_reason || "Briefing generation failed.",
+          provider: outcome.provider,
+          model: outcome.model,
+          validation_errors: outcome.validation_errors
+        )
+      end
+
+      db.transaction do
+        briefing = db[:briefings].where(id: id, workspace_id: workspace[:id]).first
+        return nil unless briefing
+
+        verify_lock!(briefing, expected)
+        ensure_editable!(briefing)
+        now = Time.now.utc
+        next_version_number = briefing[:current_version_number] + 1
+        correlation_id = SecureRandom.uuid
+        update_projection!(
+          briefing: briefing,
+          status: "draft",
+          version_number: next_version_number,
+          occurred_at: now
+        )
+        version_id = insert_version(
+          briefing_id: id,
+          actor: actor,
+          version_number: next_version_number,
+          status: "draft",
+          change_summary: "AI-generated draft from grounded workspace context.",
+          sections: outcome.sections,
+          occurred_at: now
+        )
+        write_audit(
+          workspace: workspace,
+          actor: actor,
+          event_type: "briefing.generated",
+          subject_type: "briefing",
+          subject_id: id,
+          payload: generation_audit_payload(
+            outcome: outcome,
+            manifest: manifest,
+            version_id: version_id,
+            version_number: next_version_number
+          ),
           correlation_id: correlation_id,
           occurred_at: now
         )
@@ -358,7 +441,10 @@ module Holocron
     def source_catalog(meeting:, workspace:)
       request_id = meeting[:scheduling_request_id]
       context = Relationships.context_for_request(request_id: request_id, workspace: workspace)
-      references = [{source_type: "scheduling_request", source_id: request_id}]
+      references = [
+        {source_type: "scheduling_request", source_id: request_id},
+        {source_type: "meeting", source_id: meeting[:id]}
+      ]
       references.concat(context[:people].map { |person| {source_type: "person", source_id: person[:id]} })
       references.concat(context[:organizations].map { |organization| {source_type: "organization", source_id: organization[:id]} })
       references.concat(context[:interactions].map { |interaction| {source_type: "interaction", source_id: interaction[:id]} })
@@ -380,9 +466,19 @@ module Holocron
           source_label: "Scheduling request: #{request[:requester_name]}",
           source_excerpt: request[:purpose]
         }
+      when "meeting"
+        meeting = db[:meetings].where(id: source_id, workspace_id: workspace[:id]).first
+        meeting && {
+          source_type: source_type,
+          source_id: source_id,
+          source_label: "Meeting: #{meeting[:title]}",
+          source_excerpt: [meeting[:starts_at]&.iso8601, meeting[:ends_at]&.iso8601, meeting[:location]].compact.join(" | ")
+        }
       when "person"
         person = db[:people].where(id: source_id, workspace_id: workspace[:id]).first
-        organization = person && person[:organization_id] && db[:organizations].where(id: person[:organization_id]).first
+        organization = person && person[:organization_id] && db[:organizations]
+          .where(id: person[:organization_id], workspace_id: workspace[:id])
+          .first
         context = [person&.fetch(:job_title, nil), organization&.fetch(:name, nil)].compact.join(", ")
         person && {
           source_type: source_type,
@@ -400,7 +496,9 @@ module Holocron
         }
       when "interaction"
         interaction = db[:interactions].where(id: source_id, workspace_id: workspace[:id]).first
-        person = interaction && db[:people].where(id: interaction[:person_id]).first
+        person = interaction && db[:people]
+          .where(id: interaction[:person_id], workspace_id: workspace[:id])
+          .first
         interaction && {
           source_type: source_type,
           source_id: source_id,
@@ -518,6 +616,47 @@ module Holocron
       return unless updated.zero?
 
       raise ConflictError.new(db[:briefings].where(id: briefing[:id]).first)
+    end
+
+    def ensure_editable!(briefing)
+      return unless briefing[:status] == "in_review"
+
+      raise StateError.new("A briefing under review cannot be regenerated.", current_status: briefing[:status])
+    end
+
+    def record_generation_failure(briefing:, workspace:, actor:, outcome:, manifest:)
+      now = Time.now.utc
+      Database.db.transaction do
+        write_audit(
+          workspace: workspace,
+          actor: actor,
+          event_type: "briefing.generation_failed",
+          subject_type: "briefing",
+          subject_id: briefing[:id],
+          payload: generation_audit_payload(outcome: outcome, manifest: manifest),
+          correlation_id: SecureRandom.uuid,
+          occurred_at: now
+        )
+      end
+    end
+
+    def generation_audit_payload(outcome:, manifest:, version_id: nil, version_number: nil)
+      {
+        provider: outcome.provider,
+        model: outcome.model,
+        prompt_version: BriefingGeneration::PROMPT_VERSION,
+        context_version: manifest["context_version"],
+        provider_request_id: outcome.provider_request_id,
+        attempt_count: outcome.attempt_count,
+        input_tokens: outcome.input_tokens,
+        output_tokens: outcome.output_tokens,
+        duration_ms: outcome.duration_ms,
+        failure_reason: outcome.failure_reason,
+        validation_errors: outcome.validation_errors,
+        retrieval: manifest["retrieval"],
+        version_id: version_id,
+        version_number: version_number
+      }.compact
     end
 
     def verify_lock!(briefing, expected)
