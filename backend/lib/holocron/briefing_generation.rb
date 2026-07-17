@@ -39,8 +39,7 @@ module Holocron
               "body" => {"type" => "string"},
               "source_refs" => {
                 "type" => "array",
-                "items" => {"type" => "string"},
-                "uniqueItems" => true
+                "items" => {"type" => "string"}
               }
             }
           }
@@ -102,6 +101,8 @@ module Holocron
           only when its supporting source_ref is included in that section's source_refs. Use only
           source_ref values present in the manifest. Recommendations may synthesize the supplied
           purpose and history, but must be framed as suggested talking points rather than facts.
+          Format the objectives body as one concise suggested talking point per line, with each line
+          prefixed by "- ".
           The prior_history section may use only interaction sources whose current_request fact is
           false; current-request interactions describe intake, not prior relationship history.
           Leave a section body empty when the context cannot support useful content. Put important

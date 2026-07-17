@@ -79,7 +79,16 @@ type Foundation = {
   members: WorkspaceMember[];
 };
 
-type WorkspaceView = "scheduling" | "briefings" | "relationships" | "foundation" | "members" | "audit";
+type WorkspaceView = "meetings" | "relationships" | "foundation" | "members" | "audit";
+type MeetingsView = "requests" | "briefings";
+type LoadingView = WorkspaceView | "meeting-briefings";
+
+function briefingTalkingPoints(body: string) {
+  return body
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^(?:[-*]|\d+[.)])\s+/, ""))
+    .filter(Boolean);
+}
 
 type RequestListItem = {
   id: string;
@@ -612,8 +621,9 @@ export default function Home() {
   const [briefings, setBriefings] = useState<BriefingListItem[]>([]);
   const [briefingsLoaded, setBriefingsLoaded] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[] | null>(null);
-  const [activeView, setActiveView] = useState<WorkspaceView>("scheduling");
-  const [loadingView, setLoadingView] = useState<WorkspaceView | null>(null);
+  const [activeView, setActiveView] = useState<WorkspaceView>("meetings");
+  const [meetingsView, setMeetingsView] = useState<MeetingsView>("requests");
+  const [loadingView, setLoadingView] = useState<LoadingView | null>(null);
   const [selectedRequest, setSelectedRequest] = useState<SchedulingRequest | null>(null);
   const [selectedBriefing, setSelectedBriefing] = useState<BriefingDetail | null>(null);
   const [form, setForm] = useState<RequestForm | null>(null);
@@ -681,20 +691,38 @@ export default function Home() {
   async function openWorkspaceView(view: WorkspaceView) {
     setActiveView(view);
     setError("");
-    if (typeof window !== "undefined") window.history.replaceState(null, "", `#${view}`);
+    if (typeof window !== "undefined") {
+      const hash = view === "meetings" ? `#meetings/${meetingsView}` : `#${view}`;
+      window.history.replaceState(null, "", hash);
+    }
 
-    const needsData = (view === "briefings" && !briefingsLoaded)
-      || (view === "relationships" && !relationships)
+    const needsData = (view === "relationships" && !relationships)
       || (view === "audit" && !auditEvents);
     if (!needsData) return;
 
     setLoadingView(view);
     try {
-      if (view === "briefings") await loadBriefings();
       if (view === "relationships") await loadRelationships();
       if (view === "audit") await loadAuditEvents();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load this page.");
+    } finally {
+      setLoadingView(null);
+    }
+  }
+
+  async function openMeetingsView(view: MeetingsView) {
+    setActiveView("meetings");
+    setMeetingsView(view);
+    setError("");
+    if (typeof window !== "undefined") window.history.replaceState(null, "", `#meetings/${view}`);
+    if (view !== "briefings" || briefingsLoaded) return;
+
+    setLoadingView("meeting-briefings");
+    try {
+      await loadBriefings();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load briefings.");
     } finally {
       setLoadingView(null);
     }
@@ -718,7 +746,8 @@ export default function Home() {
       }
 
       setSession(sessionBody);
-      setActiveView("scheduling");
+      setActiveView("meetings");
+      setMeetingsView("requests");
       await loadStartup();
     } catch (requestError) {
       setError(
@@ -760,7 +789,7 @@ export default function Home() {
   }
 
   async function openBriefing(id: string) {
-    await openWorkspaceView("briefings");
+    await openMeetingsView("briefings");
     await selectBriefing(id);
   }
 
@@ -1045,7 +1074,7 @@ export default function Home() {
 
       await loadRequests();
       await selectRequest(selectedRequest.id);
-      await openWorkspaceView("briefings");
+      await openMeetingsView("briefings");
 
       return true;
     } catch (requestError) {
@@ -1092,7 +1121,8 @@ export default function Home() {
     setBriefings([]);
     setBriefingsLoaded(false);
     setAuditEvents(null);
-    setActiveView("scheduling");
+    setActiveView("meetings");
+    setMeetingsView("requests");
     setLoadingView(null);
     setSelectedRequest(null);
     setSelectedBriefing(null);
@@ -1177,8 +1207,7 @@ export default function Home() {
       <aside className="workspace-sidebar">
         <div className="wordmark wordmark-inverse"><span className="wordmark-mark" aria-hidden="true">H</span><span>Holocron</span></div>
         <nav className="workspace-nav" aria-label="Workspace sections">
-          <button type="button" aria-label="Scheduling" className={activeView === "scheduling" ? "is-active" : ""} aria-current={activeView === "scheduling" ? "page" : undefined} onClick={() => void openWorkspaceView("scheduling")}><Inbox aria-hidden="true" /><span>Scheduling</span></button>
-          <button type="button" aria-label="Briefings" className={activeView === "briefings" ? "is-active" : ""} aria-current={activeView === "briefings" ? "page" : undefined} onClick={() => void openWorkspaceView("briefings")}><BookOpen aria-hidden="true" /><span>Briefings</span></button>
+          <button type="button" aria-label="Meetings" className={activeView === "meetings" ? "is-active" : ""} aria-current={activeView === "meetings" ? "page" : undefined} onClick={() => void openWorkspaceView("meetings")}><CalendarDays aria-hidden="true" /><span>Meetings</span></button>
           <button type="button" aria-label="Relationships" className={activeView === "relationships" ? "is-active" : ""} aria-current={activeView === "relationships" ? "page" : undefined} onClick={() => void openWorkspaceView("relationships")}><Link2 aria-hidden="true" /><span>Relationships</span></button>
           <button type="button" aria-label="Foundation" className={activeView === "foundation" ? "is-active" : ""} aria-current={activeView === "foundation" ? "page" : undefined} onClick={() => void openWorkspaceView("foundation")}><Database aria-hidden="true" /><span>Foundation</span></button>
           <button type="button" aria-label="Members" className={activeView === "members" ? "is-active" : ""} aria-current={activeView === "members" ? "page" : undefined} onClick={() => void openWorkspaceView("members")}><UsersRound aria-hidden="true" /><span>Members</span></button>
@@ -1203,9 +1232,15 @@ export default function Home() {
               <strong>Loading {activeView}</strong>
             </section>
           ) : null}
-          {activeView !== "scheduling" && error ? <p className="form-error workflow-error" role="alert">{error}</p> : null}
+          {activeView !== "meetings" && error ? <p className="form-error workflow-error" role="alert">{error}</p> : null}
 
-          {activeView === "scheduling" ? (
+          {activeView === "meetings" ? <div className="meetings-view">
+            <nav className="meetings-tabs" aria-label="Meeting workspace views">
+              <button type="button" className={meetingsView === "requests" ? "is-active" : ""} aria-current={meetingsView === "requests" ? "page" : undefined} onClick={() => void openMeetingsView("requests")}><Inbox aria-hidden="true" /><span>Requests</span></button>
+              <button type="button" className={meetingsView === "briefings" ? "is-active" : ""} aria-current={meetingsView === "briefings" ? "page" : undefined} onClick={() => void openMeetingsView("briefings")}><BookOpen aria-hidden="true" /><span>Briefings</span></button>
+            </nav>
+
+          {meetingsView === "requests" ? (
           <section id="scheduling" className="workspace-section overview-section scheduling-section">
             <div className="section-heading-row">
               <div><p className="eyebrow">Scheduling intake</p><h1>Requests</h1></div>
@@ -1285,7 +1320,14 @@ export default function Home() {
           </section>
           ) : null}
 
-          {activeView === "briefings" && loadingView !== "briefings" && briefingsLoaded ? <BriefingsSection
+          {meetingsView === "briefings" && error ? <p className="form-error workflow-error" role="alert">{error}</p> : null}
+          {meetingsView === "briefings" && loadingView === "meeting-briefings" ? (
+            <section className="workspace-page-loading" aria-live="polite">
+              <span className="workspace-loading-mark" aria-hidden="true" />
+              <strong>Loading briefings</strong>
+            </section>
+          ) : null}
+          {meetingsView === "briefings" && loadingView !== "meeting-briefings" && briefingsLoaded ? <BriefingsSection
             key={selectedBriefing?.id ?? "briefings"}
             briefings={briefings}
             selectedBriefing={selectedBriefing}
@@ -1297,6 +1339,7 @@ export default function Home() {
             onSubmitReview={submitBriefingForReview}
             onReview={reviewBriefing}
           /> : null}
+          </div> : null}
 
           {activeView === "relationships" && loadingView !== "relationships" && relationships ? (
             <RelationshipsSection
@@ -1543,7 +1586,13 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                     {viewedVersion.sections.map((section) => (
                       <section className="briefing-content-section" key={section.id}>
                         <div><span>{briefingSectionLabels[section.section_type]}</span><h4>{section.title}</h4></div>
-                        {section.body ? <p>{section.body}</p> : <p className="muted-value">Not yet drafted.</p>}
+                        {section.body ? (
+                          section.section_type === "objectives" ? (
+                            <ul className="briefing-talking-points">
+                              {briefingTalkingPoints(section.body).map((point, index) => <li key={`${section.id}-point-${index}`}>{point}</li>)}
+                            </ul>
+                          ) : <p>{section.body}</p>
+                        ) : <p className="muted-value">Not yet drafted.</p>}
                         {section.sources.length > 0 ? <div className="briefing-sources">{section.sources.map((source) => <div key={`${source.source_type}-${source.source_id}`}><Link2 aria-hidden="true" /><span><strong>{source.source_label}</strong><small>{formatRelationshipType(source.source_type)}{source.source_excerpt ? ` · ${source.source_excerpt}` : ""}</small></span></div>)}</div> : null}
                       </section>
                     ))}

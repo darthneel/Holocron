@@ -685,6 +685,13 @@ class HolocronAppTest < Minitest::Test
     assert_equal audit_count + 1, Holocron::Database.db[:audit_events].count
   end
 
+  def test_briefing_schema_leaves_source_ref_uniqueness_to_application_validation
+    source_refs = Holocron::BriefingGeneration::OUTPUT_SCHEMA
+      .dig("properties", "sections", "items", "properties", "source_refs")
+
+    refute source_refs.key?("uniqueItems")
+  end
+
   def test_grounded_generation_caps_prior_interactions_per_person
     briefing = create_briefing(isolated_request_overrides("interaction-cap"))
     db = Holocron::Database.db

@@ -332,15 +332,15 @@ a:focus-visible {
 }
 
 .workspace-nav button:nth-child(2) svg {
-  color: var(--peach);
-}
-
-.workspace-nav button:nth-child(3) svg {
   color: var(--cool-strong);
 }
 
-.workspace-nav button:nth-child(4) svg {
+.workspace-nav button:nth-child(3) svg {
   color: var(--mineral);
+}
+
+.workspace-nav button:nth-child(4) svg {
+  color: var(--peach);
 }
 
 .workspace-nav svg {
@@ -499,6 +499,63 @@ a:focus-visible {
 
 .overview-section {
   padding-top: 0;
+  border-top: 0;
+}
+
+.meetings-tabs {
+  width: min(100%, 292px);
+  min-height: 40px;
+  padding: 3px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.meetings-tabs button {
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.meetings-tabs button:hover {
+  color: var(--ink);
+}
+
+.meetings-tabs button.is-active {
+  background: var(--charcoal);
+  color: var(--ink);
+}
+
+.meetings-tabs button:first-child svg {
+  color: var(--accent);
+}
+
+.meetings-tabs button:last-child svg {
+  color: var(--peach);
+}
+
+.meetings-tabs svg {
+  width: 15px;
+  height: 15px;
+}
+
+.meetings-view > .workspace-section {
+  padding-top: 28px;
   border-top: 0;
 }
 
@@ -1429,6 +1486,25 @@ a:focus-visible {
   font-size: 12px;
   line-height: 1.7;
   white-space: pre-wrap;
+}
+
+.briefing-talking-points {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 7px;
+  list-style: disc;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.briefing-talking-points li {
+  padding-left: 3px;
+  overflow-wrap: anywhere;
+}
+
+.briefing-talking-points li::marker {
+  color: var(--peach);
 }
 
 .briefing-sources {
