@@ -75,6 +75,20 @@ class HolocronAppTest < Minitest::Test
     assert_operator parsed_response.fetch("audit_events").length, :>=, 3
   end
 
+  def test_bootstrap_omits_audit_history_and_audit_endpoint_is_bounded
+    get "/api/bootstrap"
+
+    assert last_response.ok?
+    assert_equal "Cedar Grove Mayor's Office", parsed_response.dig("workspace", "name")
+    assert_equal 5, parsed_response.fetch("members").length
+    refute parsed_response.key?("audit_events")
+
+    get "/api/audit-events?limit=2"
+
+    assert last_response.ok?
+    assert_equal 2, parsed_response.fetch("audit_events").length
+  end
+
   def test_request_extraction_creates_only_an_audited_draft
     request_count = Holocron::Database.db[:scheduling_requests].count
     people_count = Holocron::Database.db[:people].count
@@ -621,6 +635,12 @@ class HolocronAppTest < Minitest::Test
     get "/api/briefings"
     assert last_response.ok?
     assert_includes parsed_response.fetch("briefings").map { |entry| entry.fetch("id") }, briefing.fetch("id")
+
+    get "/api/scheduling-requests/#{scheduled.fetch("id")}"
+    assert last_response.ok?
+    assert_equal briefing.fetch("id"), parsed_response.dig("briefing", "id")
+    assert_equal "draft", parsed_response.dig("briefing", "status")
+    assert_equal "City Hall - Conference Room A", parsed_response.dig("briefing", "meeting", "location")
   end
 
   def test_grounded_generation_appends_a_cited_draft_version

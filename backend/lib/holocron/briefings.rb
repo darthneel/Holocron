@@ -57,11 +57,48 @@ module Holocron
     module_function
 
     def list(workspace:)
-      Database.db[:briefings]
+      db = Database.db
+      briefings = db[:briefings]
         .where(workspace_id: workspace[:id])
         .reverse_order(:updated_at)
         .all
-        .map { |briefing| serialize_list_item(briefing) }
+      return [] if briefings.empty?
+
+      meetings = db[:meetings]
+        .where(id: briefings.map { |briefing| briefing[:meeting_id] })
+        .all
+        .to_h { |meeting| [meeting[:id], meeting] }
+      requests = db[:scheduling_requests]
+        .where(id: meetings.values.map { |meeting| meeting[:scheduling_request_id] })
+        .all
+        .to_h { |request| [request[:id], request] }
+      current_version_numbers = briefings.to_h do |briefing|
+        [briefing[:id], briefing[:current_version_number]]
+      end
+      current_versions = db[:briefing_versions]
+        .where(briefing_id: briefings.map { |briefing| briefing[:id] })
+        .all
+        .select do |version|
+          current_version_numbers[version[:briefing_id]] == version[:version_number]
+        end
+        .to_h { |version| [version[:briefing_id], version] }
+      section_counts = db[:briefing_sections]
+        .where(briefing_version_id: current_versions.values.map { |version| version[:id] })
+        .group(:briefing_version_id)
+        .select(:briefing_version_id, Sequel.function(:count, Sequel.lit("*")).as(:count))
+        .to_hash(:briefing_version_id, :count)
+
+      briefings.map do |briefing|
+        meeting = meetings.fetch(briefing[:meeting_id])
+        request = requests.fetch(meeting[:scheduling_request_id])
+        version = current_versions.fetch(briefing[:id])
+        serialize_list_item(
+          briefing,
+          meeting: meeting,
+          request: request,
+          section_count: section_counts.fetch(version[:id], 0)
+        )
+      end
     end
 
     def fetch(id:, workspace:)
@@ -676,11 +713,7 @@ module Holocron
       value
     end
 
-    def serialize_list_item(briefing)
-      db = Database.db
-      meeting = db[:meetings].where(id: briefing[:meeting_id]).first
-      request = db[:scheduling_requests].where(id: meeting[:scheduling_request_id]).first
-      version = current_version_dataset(briefing).first
+    def serialize_list_item(briefing, meeting:, request:, section_count:)
       {
         id: briefing[:id],
         status: briefing[:status],
@@ -690,7 +723,7 @@ module Holocron
         requester_name: request[:requester_name],
         requester_organization: request[:requester_organization],
         purpose: request[:purpose],
-        section_count: db[:briefing_sections].where(briefing_version_id: version[:id]).count,
+        section_count: section_count,
         updated_at: iso8601(briefing[:updated_at])
       }
     end

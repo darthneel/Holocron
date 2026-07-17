@@ -77,8 +77,9 @@ type Foundation = {
     status: string;
   } | null;
   members: WorkspaceMember[];
-  audit_events: AuditEvent[];
 };
+
+type WorkspaceView = "scheduling" | "briefings" | "relationships" | "foundation" | "members" | "audit";
 
 type RequestListItem = {
   id: string;
@@ -226,6 +227,7 @@ type SchedulingRequest = {
     prompt_version: string;
     accepted_at: string;
   } | null;
+  briefing: RequestBriefingSummary | null;
   relationship_context: RelationshipContext;
   available_transitions: AvailableTransition[];
   transitions: StateTransition[];
@@ -241,6 +243,12 @@ type MeetingSummary = {
   starts_at: string;
   ends_at: string;
   location: string | null;
+};
+
+type RequestBriefingSummary = {
+  id: string;
+  status: string;
+  meeting: MeetingSummary;
 };
 
 type BriefingSource = {
@@ -602,6 +610,10 @@ export default function Home() {
   const [requests, setRequests] = useState<RequestListItem[]>([]);
   const [relationships, setRelationships] = useState<RelationshipsOverview | null>(null);
   const [briefings, setBriefings] = useState<BriefingListItem[]>([]);
+  const [briefingsLoaded, setBriefingsLoaded] = useState(false);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[] | null>(null);
+  const [activeView, setActiveView] = useState<WorkspaceView>("scheduling");
+  const [loadingView, setLoadingView] = useState<WorkspaceView | null>(null);
   const [selectedRequest, setSelectedRequest] = useState<SchedulingRequest | null>(null);
   const [selectedBriefing, setSelectedBriefing] = useState<BriefingDetail | null>(null);
   const [form, setForm] = useState<RequestForm | null>(null);
@@ -622,37 +634,70 @@ export default function Home() {
     (member) => member.status === "active" && ["owner", "chief_of_staff", "scheduler"].includes(member.role),
   ) ?? [];
 
-  async function loadWorkspace() {
-    const [foundationResponse, requestsResponse, relationshipsResponse, briefingsResponse] = await Promise.all([
-      fetch(`${API_URL}/api/foundation`),
+  async function responseBody(response: Response, fallback: string) {
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error ?? fallback);
+    return body;
+  }
+
+  async function loadRequests() {
+    const response = await fetch(`${API_URL}/api/scheduling-requests`);
+    const body = await responseBody(response, "Unable to load scheduling requests.");
+    setRequests(body.requests);
+  }
+
+  async function loadBriefings() {
+    const response = await fetch(`${API_URL}/api/briefings`);
+    const body = await responseBody(response, "Unable to load briefings.");
+    setBriefings(body.briefings);
+    setBriefingsLoaded(true);
+  }
+
+  async function loadRelationships() {
+    const response = await fetch(`${API_URL}/api/relationships`);
+    const body = await responseBody(response, "Unable to load relationships.");
+    setRelationships(body);
+  }
+
+  async function loadAuditEvents() {
+    const response = await fetch(`${API_URL}/api/audit-events?limit=25`);
+    const body = await responseBody(response, "Unable to load the audit log.");
+    setAuditEvents(body.audit_events);
+  }
+
+  async function loadStartup() {
+    const [bootstrapResponse, requestsResponse] = await Promise.all([
+      fetch(`${API_URL}/api/bootstrap`),
       fetch(`${API_URL}/api/scheduling-requests`),
-      fetch(`${API_URL}/api/relationships`),
-      fetch(`${API_URL}/api/briefings`),
     ]);
-    const [foundationBody, requestsBody, relationshipsBody, briefingsBody] = await Promise.all([
-      foundationResponse.json(),
-      requestsResponse.json(),
-      relationshipsResponse.json(),
-      briefingsResponse.json(),
+    const [bootstrapBody, requestsBody] = await Promise.all([
+      responseBody(bootstrapResponse, "Unable to load the workspace."),
+      responseBody(requestsResponse, "Unable to load scheduling requests."),
     ]);
-
-    if (!foundationResponse.ok) {
-      throw new Error(foundationBody.error ?? "Unable to load the workspace.");
-    }
-    if (!requestsResponse.ok) {
-      throw new Error(requestsBody.error ?? "Unable to load scheduling requests.");
-    }
-    if (!relationshipsResponse.ok) {
-      throw new Error(relationshipsBody.error ?? "Unable to load relationships.");
-    }
-    if (!briefingsResponse.ok) {
-      throw new Error(briefingsBody.error ?? "Unable to load briefings.");
-    }
-
-    setFoundation(foundationBody);
+    setFoundation(bootstrapBody);
     setRequests(requestsBody.requests);
-    setRelationships(relationshipsBody);
-    setBriefings(briefingsBody.briefings);
+  }
+
+  async function openWorkspaceView(view: WorkspaceView) {
+    setActiveView(view);
+    setError("");
+    if (typeof window !== "undefined") window.history.replaceState(null, "", `#${view}`);
+
+    const needsData = (view === "briefings" && !briefingsLoaded)
+      || (view === "relationships" && !relationships)
+      || (view === "audit" && !auditEvents);
+    if (!needsData) return;
+
+    setLoadingView(view);
+    try {
+      if (view === "briefings") await loadBriefings();
+      if (view === "relationships") await loadRelationships();
+      if (view === "audit") await loadAuditEvents();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load this page.");
+    } finally {
+      setLoadingView(null);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -673,7 +718,8 @@ export default function Home() {
       }
 
       setSession(sessionBody);
-      await loadWorkspace();
+      setActiveView("scheduling");
+      await loadStartup();
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -701,19 +747,21 @@ export default function Home() {
     }
   }
 
-  async function selectBriefing(id: string, scroll = false) {
+  async function selectBriefing(id: string) {
     setError("");
     try {
       const response = await fetch(`${API_URL}/api/briefings/${id}`);
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Unable to load briefing.");
       setSelectedBriefing(body);
-      if (scroll) {
-        window.setTimeout(() => document.getElementById("briefings")?.scrollIntoView({behavior: "smooth"}), 0);
-      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load briefing.");
     }
+  }
+
+  async function openBriefing(id: string) {
+    await openWorkspaceView("briefings");
+    await selectBriefing(id);
   }
 
   function beginNewRequest() {
@@ -761,6 +809,7 @@ export default function Home() {
 
       const extraction = body as RequestExtraction;
       setRequestExtraction(extraction);
+      setAuditEvents(null);
       if (extraction.status !== "succeeded" || !extraction.proposal) {
         throw new Error(extraction.failure_reason ?? "The extraction did not produce a reviewable draft.");
       }
@@ -847,7 +896,9 @@ export default function Home() {
       setForm(null);
       setRequestExtraction(null);
       setExtractionText("");
-      await loadWorkspace();
+      await loadRequests();
+      setRelationships(null);
+      setAuditEvents(null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to save scheduling request.");
     } finally {
@@ -883,13 +934,14 @@ export default function Home() {
       if (!response.ok) {
         if (response.status === 409) {
           await selectRequest(selectedRequest.id);
-          await loadWorkspace();
+          await loadRequests();
         }
         throw new Error(body.error ?? "Unable to update request status.");
       }
 
       setSelectedRequest(body);
-      await loadWorkspace();
+      await loadRequests();
+      setAuditEvents(null);
       return true;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to update request status.");
@@ -919,7 +971,8 @@ export default function Home() {
         throw new Error(detail ?? "Unable to save relationship record.");
       }
 
-      await loadWorkspace();
+      await loadRelationships();
+      setAuditEvents(null);
       if (selectedRequest) await selectRequest(selectedRequest.id);
       return true;
     } catch (requestError) {
@@ -949,7 +1002,8 @@ export default function Home() {
     }
 
     setSelectedBriefing(body);
-    await loadWorkspace();
+    await loadBriefings();
+    setAuditEvents(null);
     return body as BriefingDetail;
   }
 
@@ -979,7 +1033,6 @@ export default function Home() {
         `/api/scheduling-requests/${selectedRequest.id}/meeting`,
         payload,
       );
-      window.setTimeout(() => document.getElementById("briefings")?.scrollIntoView({behavior: "smooth"}), 0);
 
       try {
         await sendBriefingCommand(`/api/briefings/${createdBriefing.id}/generate`, {
@@ -989,6 +1042,10 @@ export default function Home() {
         const detail = generationError instanceof Error ? generationError.message : "Unable to generate the briefing.";
         setError(`Meeting created with a fallback draft. Automatic briefing generation failed: ${detail}`);
       }
+
+      await loadRequests();
+      await selectRequest(selectedRequest.id);
+      await openWorkspaceView("briefings");
 
       return true;
     } catch (requestError) {
@@ -1033,6 +1090,10 @@ export default function Home() {
     setRequests([]);
     setRelationships(null);
     setBriefings([]);
+    setBriefingsLoaded(false);
+    setAuditEvents(null);
+    setActiveView("scheduling");
+    setLoadingView(null);
     setSelectedRequest(null);
     setSelectedBriefing(null);
     setForm(null);
@@ -1116,12 +1177,12 @@ export default function Home() {
       <aside className="workspace-sidebar">
         <div className="wordmark wordmark-inverse"><span className="wordmark-mark" aria-hidden="true">H</span><span>Holocron</span></div>
         <nav className="workspace-nav" aria-label="Workspace sections">
-          <a href="#schedule" className="is-active"><Inbox aria-hidden="true" /><span>Scheduling</span></a>
-          <a href="#briefings"><BookOpen aria-hidden="true" /><span>Briefings</span></a>
-          <a href="#relationships"><Link2 aria-hidden="true" /><span>Relationships</span></a>
-          <a href="#overview"><Database aria-hidden="true" /><span>Foundation</span></a>
-          <a href="#members"><UsersRound aria-hidden="true" /><span>Members</span></a>
-          <a href="#audit"><ScrollText aria-hidden="true" /><span>Audit log</span></a>
+          <button type="button" aria-label="Scheduling" className={activeView === "scheduling" ? "is-active" : ""} aria-current={activeView === "scheduling" ? "page" : undefined} onClick={() => void openWorkspaceView("scheduling")}><Inbox aria-hidden="true" /><span>Scheduling</span></button>
+          <button type="button" aria-label="Briefings" className={activeView === "briefings" ? "is-active" : ""} aria-current={activeView === "briefings" ? "page" : undefined} onClick={() => void openWorkspaceView("briefings")}><BookOpen aria-hidden="true" /><span>Briefings</span></button>
+          <button type="button" aria-label="Relationships" className={activeView === "relationships" ? "is-active" : ""} aria-current={activeView === "relationships" ? "page" : undefined} onClick={() => void openWorkspaceView("relationships")}><Link2 aria-hidden="true" /><span>Relationships</span></button>
+          <button type="button" aria-label="Foundation" className={activeView === "foundation" ? "is-active" : ""} aria-current={activeView === "foundation" ? "page" : undefined} onClick={() => void openWorkspaceView("foundation")}><Database aria-hidden="true" /><span>Foundation</span></button>
+          <button type="button" aria-label="Members" className={activeView === "members" ? "is-active" : ""} aria-current={activeView === "members" ? "page" : undefined} onClick={() => void openWorkspaceView("members")}><UsersRound aria-hidden="true" /><span>Members</span></button>
+          <button type="button" aria-label="Audit log" className={activeView === "audit" ? "is-active" : ""} aria-current={activeView === "audit" ? "page" : undefined} onClick={() => void openWorkspaceView("audit")}><ScrollText aria-hidden="true" /><span>Audit log</span></button>
         </nav>
         <div className="sidebar-profile">
           <span className="profile-initials">{initials(session.display_name)}</span>
@@ -1132,11 +1193,20 @@ export default function Home() {
       <div className="workspace-body">
         <header className="workspace-header">
           <div><span className="header-label">Workspace</span><strong>{foundation.workspace.name}</strong></div>
-          <button className="icon-text-button" type="button" onClick={signOut}><LogOut aria-hidden="true" /><span>Sign out</span></button>
+          <button className="icon-text-button" type="button" aria-label="Sign out" onClick={signOut}><LogOut aria-hidden="true" /><span>Sign out</span></button>
         </header>
 
         <main className="workspace-main">
-          <section id="schedule" className="workspace-section overview-section scheduling-section">
+          {loadingView === activeView ? (
+            <section className="workspace-page-loading" aria-live="polite">
+              <span className="workspace-loading-mark" aria-hidden="true" />
+              <strong>Loading {activeView}</strong>
+            </section>
+          ) : null}
+          {activeView !== "scheduling" && error ? <p className="form-error workflow-error" role="alert">{error}</p> : null}
+
+          {activeView === "scheduling" ? (
+          <section id="scheduling" className="workspace-section overview-section scheduling-section">
             <div className="section-heading-row">
               <div><p className="eyebrow">Scheduling intake</p><h1>Requests</h1></div>
               <div className="section-heading-actions">
@@ -1198,14 +1268,14 @@ export default function Home() {
                   <RequestDetail
                     key={selectedRequest.id}
                     request={selectedRequest}
-                    briefing={briefings.find((entry) => entry.meeting.scheduling_request_id === selectedRequest.id)}
+                    briefing={selectedRequest.briefing}
                     canMutate={canMutate}
                     isTransitioning={isTransitioning}
                     isBriefingSaving={isBriefingSaving}
                     onEdit={beginEditing}
                     onTransition={transitionRequest}
                     onCreateMeeting={createMeetingAndBriefing}
-                    onOpenBriefing={(id) => selectBriefing(id, true)}
+                    onOpenBriefing={openBriefing}
                   />
                 ) : (
                   <div className="request-empty-panel"><CalendarDays aria-hidden="true" /><h2>Select a request</h2><p>Review its intake details, candidate windows, and recorded activity here.</p></div>
@@ -1213,8 +1283,9 @@ export default function Home() {
               </div>
             </div>
           </section>
+          ) : null}
 
-          <BriefingsSection
+          {activeView === "briefings" && loadingView !== "briefings" && briefingsLoaded ? <BriefingsSection
             key={selectedBriefing?.id ?? "briefings"}
             briefings={briefings}
             selectedBriefing={selectedBriefing}
@@ -1225,9 +1296,9 @@ export default function Home() {
             onSaveVersion={saveBriefingVersion}
             onSubmitReview={submitBriefingForReview}
             onReview={reviewBriefing}
-          />
+          /> : null}
 
-          {relationships ? (
+          {activeView === "relationships" && loadingView !== "relationships" && relationships ? (
             <RelationshipsSection
               relationships={relationships}
               canMutate={canMutate}
@@ -1236,7 +1307,7 @@ export default function Home() {
             />
           ) : null}
 
-          <section id="overview" className="workspace-section">
+          {activeView === "foundation" ? <section id="foundation" className="workspace-section overview-section">
             <div className="section-heading-row compact"><div><p className="eyebrow">Project foundation</p><h2>{foundation.workspace.name}</h2></div><span className="status-badge"><i aria-hidden="true" /> Active</span></div>
             <div className="stat-grid">
               <article className="stat-item"><UserRound aria-hidden="true" /><span>Principal</span><strong>{foundation.principal?.display_name ?? "Unassigned"}</strong></article>
@@ -1244,9 +1315,9 @@ export default function Home() {
               <article className="stat-item"><Clock3 aria-hidden="true" /><span>Timezone</span><strong>{foundation.workspace.timezone}</strong></article>
               <article className="stat-item"><ShieldCheck aria-hidden="true" /><span>Retention</span><strong>{foundation.workspace.retention_days} days</strong></article>
             </div>
-          </section>
+          </section> : null}
 
-          <section id="members" className="workspace-section">
+          {activeView === "members" ? <section id="members" className="workspace-section overview-section">
             <div className="section-heading-row compact"><div><p className="eyebrow">Office directory</p><h2>Workspace members</h2></div><span className="section-count">{foundation.members.length} members</span></div>
             <div className="member-table" role="table" aria-label="Workspace members">
               <div className="member-row member-table-head" role="row"><span role="columnheader">Name</span><span role="columnheader">Role</span><span role="columnheader">Email</span><span role="columnheader">Status</span></div>
@@ -1255,12 +1326,12 @@ export default function Home() {
                 <span role="cell" data-label="Role">{formatRole(member.role)}</span><span role="cell" data-label="Email">{member.email}</span><span role="cell" data-label="Status" className="member-status"><i aria-hidden="true" /> {member.status}</span>
               </div>)}
             </div>
-          </section>
+          </section> : null}
 
-          <section id="audit" className="workspace-section">
+          {activeView === "audit" && loadingView !== "audit" && auditEvents ? <section id="audit" className="workspace-section overview-section">
             <div className="section-heading-row compact"><div><p className="eyebrow">System activity</p><h2>Audit log</h2></div><span className="section-count">Append-only</span></div>
-            <div className="audit-list">{foundation.audit_events.map((auditEvent) => <article className="audit-row" key={auditEvent.id}><span className="audit-icon"><ScrollText aria-hidden="true" /></span><div><strong>{formatEvent(auditEvent.event_type)}</strong><span>{auditEvent.subject_type ?? "scheduling request"}</span></div><time dateTime={auditEvent.occurred_at}>{formatDateTime(auditEvent.occurred_at)}</time></article>)}</div>
-          </section>
+            <div className="audit-list">{auditEvents.map((auditEvent) => <article className="audit-row" key={auditEvent.id}><span className="audit-icon"><ScrollText aria-hidden="true" /></span><div><strong>{formatEvent(auditEvent.event_type)}</strong><span>{auditEvent.subject_type ?? "scheduling request"}</span></div><time dateTime={auditEvent.occurred_at}>{formatDateTime(auditEvent.occurred_at)}</time></article>)}</div>
+          </section> : null}
         </main>
       </div>
     </div>
@@ -1716,7 +1787,7 @@ function Field({ label, error, children }: {label: string; error?: string; child
 
 function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefingSaving, onEdit, onTransition, onCreateMeeting, onOpenBriefing }: {
   request: SchedulingRequest;
-  briefing?: BriefingListItem;
+  briefing: RequestBriefingSummary | null;
   canMutate: boolean;
   isTransitioning: boolean;
   isBriefingSaving: boolean;

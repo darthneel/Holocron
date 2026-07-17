@@ -229,6 +229,8 @@ module Holocron
         .map { |event| serialize_audit_event(event) }
       transitions = serialize_transitions(request[:id])
       extraction = db[:request_extractions].where(scheduling_request_id: request[:id]).first
+      meeting = db[:meetings].where(scheduling_request_id: request[:id]).first
+      briefing = meeting && db[:briefings].where(meeting_id: meeting[:id]).first
 
       {
         id: request[:id],
@@ -253,6 +255,18 @@ module Holocron
           model: extraction[:model],
           prompt_version: extraction[:prompt_version],
           accepted_at: iso8601(extraction[:accepted_at])
+        },
+        briefing: briefing && {
+          id: briefing[:id],
+          status: briefing[:status],
+          meeting: {
+            id: meeting[:id],
+            scheduling_request_id: meeting[:scheduling_request_id],
+            title: meeting[:title],
+            starts_at: iso8601(meeting[:starts_at]),
+            ends_at: iso8601(meeting[:ends_at]),
+            location: meeting[:location]
+          }
         },
         relationship_context: Relationships.context_for_request(request_id: request[:id], workspace: {id: request[:workspace_id]}),
         available_transitions: SchedulingRequestWorkflow.available_transitions(request[:status]),

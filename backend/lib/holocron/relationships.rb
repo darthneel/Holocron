@@ -24,22 +24,78 @@ module Holocron
 
     def overview(workspace:)
       db = Database.db
-      people = db[:people]
+      people_rows = db[:people]
         .where(workspace_id: workspace[:id])
         .order(Sequel.function(:lower, :display_name))
         .all
-        .map { |person| serialize_person(person) }
-      organizations = db[:organizations]
+      organization_rows = db[:organizations]
         .where(workspace_id: workspace[:id])
         .order(Sequel.function(:lower, :name))
         .all
-        .map { |organization| serialize_organization(organization) }
+      people_by_id = people_rows.to_h { |person| [person[:id], person] }
+      organizations_by_id = organization_rows.to_h { |organization| [organization[:id], organization] }
+      person_ids = people_by_id.keys
+      organization_ids = organizations_by_id.keys
+
+      request_counts_by_person = grouped_count(
+        db[:scheduling_request_people].where(person_id: person_ids),
+        :person_id,
+        distinct: :scheduling_request_id
+      )
+      interaction_counts_by_person = grouped_count(
+        db[:interactions].where(workspace_id: workspace[:id], person_id: person_ids),
+        :person_id
+      )
+      people_counts_by_organization = grouped_count(
+        db[:people].where(workspace_id: workspace[:id], organization_id: organization_ids),
+        :organization_id
+      )
+      request_counts_by_organization = grouped_count(
+        db[:scheduling_request_people]
+          .join(:people, id: :person_id)
+          .where(Sequel[:people][:workspace_id] => workspace[:id], Sequel[:people][:organization_id] => organization_ids),
+        Sequel[:people][:organization_id],
+        result_key: :organization_id,
+        distinct: Sequel[:scheduling_request_people][:scheduling_request_id]
+      )
+      interaction_counts_by_organization = grouped_count(
+        db[:interactions]
+          .join(:people, id: :person_id)
+          .where(Sequel[:people][:workspace_id] => workspace[:id], Sequel[:people][:organization_id] => organization_ids),
+        Sequel[:people][:organization_id],
+        result_key: :organization_id
+      )
+
+      people = people_rows.map do |person|
+        organization = person[:organization_id] && organizations_by_id[person[:organization_id]]
+        serialize_person_overview(
+          person,
+          organization: organization,
+          request_count: request_counts_by_person.fetch(person[:id], 0),
+          interaction_count: interaction_counts_by_person.fetch(person[:id], 0)
+        )
+      end
+      organizations = organization_rows.map do |organization|
+        serialize_organization_overview(
+          organization,
+          people_count: people_counts_by_organization.fetch(organization[:id], 0),
+          request_count: request_counts_by_organization.fetch(organization[:id], 0),
+          interaction_count: interaction_counts_by_organization.fetch(organization[:id], 0)
+        )
+      end
       interactions = db[:interactions]
-        .where(workspace_id: workspace[:id])
-        .reverse_order(:occurred_at)
+        .left_join(:people, id: Sequel[:interactions][:person_id])
+        .left_join(:workspace_members, id: Sequel[:interactions][:authored_by_workspace_member_id])
+        .where(Sequel[:interactions][:workspace_id] => workspace[:id])
+        .select_all(:interactions)
+        .select_append(
+          Sequel[:people][:display_name].as(:person_name),
+          Sequel[:workspace_members][:display_name].as(:author_name)
+        )
+        .reverse_order(Sequel[:interactions][:occurred_at])
         .limit(50)
         .all
-        .map { |interaction| serialize_interaction(interaction) }
+        .map { |interaction| serialize_interaction_overview(interaction) }
 
       {
         people: people,
@@ -49,7 +105,7 @@ module Holocron
           people: people.length,
           organizations: organizations.length,
           linked_people: people.count { |person| person[:organization] },
-          interactions: db[:interactions].where(workspace_id: workspace[:id]).count
+          interactions: interaction_counts_by_person.values.sum
         }
       }
     end
@@ -369,6 +425,22 @@ module Holocron
       }
     end
 
+    def serialize_person_overview(person, organization:, request_count:, interaction_count:)
+      {
+        id: person[:id],
+        display_name: person[:display_name],
+        primary_email: person[:primary_email],
+        primary_phone: person[:primary_phone],
+        job_title: person[:job_title],
+        notes: person[:notes],
+        organization: organization && {id: organization[:id], name: organization[:name]},
+        request_count: request_count,
+        interaction_count: interaction_count,
+        created_at: iso8601(person[:created_at]),
+        updated_at: iso8601(person[:updated_at])
+      }
+    end
+
     def serialize_organization(organization)
       db = Database.db
       {
@@ -392,6 +464,20 @@ module Holocron
       }
     end
 
+    def serialize_organization_overview(organization, people_count:, request_count:, interaction_count:)
+      {
+        id: organization[:id],
+        name: organization[:name],
+        website_url: organization[:website_url],
+        notes: organization[:notes],
+        people_count: people_count,
+        request_count: request_count,
+        interaction_count: interaction_count,
+        created_at: iso8601(organization[:created_at]),
+        updated_at: iso8601(organization[:updated_at])
+      }
+    end
+
     def serialize_interaction(interaction)
       db = Database.db
       person = db[:people].where(id: interaction[:person_id]).first
@@ -407,6 +493,39 @@ module Holocron
         source_id: interaction[:source_id],
         occurred_at: iso8601(interaction[:occurred_at])
       }
+    end
+
+    def serialize_interaction_overview(interaction)
+      {
+        id: interaction[:id],
+        interaction_type: interaction[:interaction_type],
+        summary: interaction[:summary],
+        person: interaction[:person_id] && {
+          id: interaction[:person_id],
+          display_name: interaction[:person_name]
+        },
+        scheduling_request_id: interaction[:scheduling_request_id],
+        author: interaction[:authored_by_workspace_member_id] && {
+          id: interaction[:authored_by_workspace_member_id],
+          display_name: interaction[:author_name]
+        },
+        source_type: interaction[:source_type],
+        source_id: interaction[:source_id],
+        occurred_at: iso8601(interaction[:occurred_at])
+      }
+    end
+
+    def grouped_count(dataset, group_expression, result_key: group_expression, distinct: nil)
+      count_expression = if distinct
+        Sequel.function(:count, distinct).distinct
+      else
+        Sequel.function(:count, Sequel.lit("*"))
+      end
+      selected_group = group_expression.is_a?(Symbol) ? Sequel[group_expression] : group_expression
+      dataset
+        .group(group_expression)
+        .select(selected_group.as(result_key), count_expression.as(:count))
+        .to_hash(result_key, :count)
     end
 
     def resolve_person(workspace:, actor:, display_name:, email:, organization_id:, organization_field:, existing_person_id:, source_id:, occurred_at:, correlation_id:)

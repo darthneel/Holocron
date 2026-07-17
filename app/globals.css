@@ -305,37 +305,41 @@ a:focus-visible {
   gap: 6px;
 }
 
-.workspace-nav a {
+.workspace-nav button {
   min-height: 42px;
   padding: 0 11px;
   display: flex;
   align-items: center;
   gap: 11px;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
   color: rgba(221, 220, 219, 0.68);
+  font: inherit;
   font-size: 13px;
-  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
 }
 
-.workspace-nav a:hover,
-.workspace-nav a.is-active {
+.workspace-nav button:hover,
+.workspace-nav button.is-active {
   background: var(--charcoal);
   color: var(--ink);
 }
 
-.workspace-nav a:first-child svg {
+.workspace-nav button:first-child svg {
   color: var(--accent);
 }
 
-.workspace-nav a:nth-child(2) svg {
+.workspace-nav button:nth-child(2) svg {
   color: var(--peach);
 }
 
-.workspace-nav a:nth-child(3) svg {
+.workspace-nav button:nth-child(3) svg {
   color: var(--cool-strong);
 }
 
-.workspace-nav a:nth-child(4) svg {
+.workspace-nav button:nth-child(4) svg {
   color: var(--mineral);
 }
 
@@ -463,6 +467,34 @@ a:focus-visible {
 .workspace-section {
   padding: 44px 0;
   border-top: 1px solid var(--line-strong);
+}
+
+.workspace-page-loading {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  color: var(--muted);
+}
+
+.workspace-page-loading strong {
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.workspace-loading-mark {
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: workspace-spin 700ms linear infinite;
+}
+
+@keyframes workspace-spin {
+  to { transform: rotate(360deg); }
 }
 
 .overview-section {
@@ -2674,14 +2706,14 @@ a:focus-visible {
     display: flex;
   }
 
-  .workspace-nav a {
+  .workspace-nav button {
     width: 38px;
     min-height: 38px;
     padding: 0;
     justify-content: center;
   }
 
-  .workspace-nav a span,
+  .workspace-nav button span,
   .sidebar-profile {
     display: none;
   }
@@ -2759,8 +2791,8 @@ a:focus-visible {
   }
 
   .briefing-inbox {
-    max-height: 340px;
-    overflow-y: auto;
+    max-height: none;
+    overflow-y: visible;
     border-right: 0;
     border-bottom: 1px solid var(--line-strong);
   }
@@ -2770,8 +2802,8 @@ a:focus-visible {
   }
 
   .request-inbox {
-    max-height: 340px;
-    overflow-y: auto;
+    max-height: none;
+    overflow-y: visible;
     border-right: 0;
     border-bottom: 1px solid var(--line-strong);
   }
@@ -2870,7 +2902,7 @@ a:focus-visible {
     display: none;
   }
 
-  .workspace-nav a {
+  .workspace-nav button {
     width: 34px;
     min-height: 34px;
   }

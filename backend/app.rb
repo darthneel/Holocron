@@ -59,7 +59,29 @@ module Holocron
         end
 
         r.get "foundation" do
-          foundation_payload
+          workspace_payload(include_audit: true)
+        end
+
+        r.get "bootstrap" do
+          workspace_payload(include_audit: false)
+        end
+
+        r.get "audit-events" do
+          workspace = current_workspace
+          unless workspace
+            response.status = 503
+            next({error: "Foundation data has not been seeded."})
+          end
+
+          limit = Integer(r.params.fetch("limit", "25"), exception: false) || 25
+          limit = [[limit, 1].max, 100].min
+          events = Database.db[:audit_events]
+            .where(workspace_id: workspace[:id])
+            .reverse_order(:occurred_at, :id)
+            .limit(limit)
+            .all
+            .map { |event| serialize_audit_event(event) }
+          {audit_events: events}
         end
 
         r.on "briefings" do
@@ -362,7 +384,7 @@ module Holocron
         .join(" ")
     end
 
-    def foundation_payload
+    def workspace_payload(include_audit:)
       workspace = current_workspace
 
       unless workspace
@@ -388,14 +410,7 @@ module Holocron
         .all
         .map { |member| serialize_member(member) }
 
-      audit_events = Database.db[:audit_events]
-        .where(workspace_id: workspace[:id])
-        .reverse_order(:occurred_at)
-        .limit(8)
-        .all
-        .map { |event| serialize_audit_event(event) }
-
-      {
+      payload = {
         workspace: {
           id: workspace[:id],
           slug: workspace[:slug],
@@ -410,9 +425,17 @@ module Holocron
           title: principal[:title],
           status: principal[:status]
         },
-        members: members,
-        audit_events: audit_events
+        members: members
       }
+      if include_audit
+        payload[:audit_events] = Database.db[:audit_events]
+          .where(workspace_id: workspace[:id])
+          .reverse_order(:occurred_at, :id)
+          .limit(8)
+          .all
+          .map { |event| serialize_audit_event(event) }
+      end
+      payload
     end
 
     def current_workspace
