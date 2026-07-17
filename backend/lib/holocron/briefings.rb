@@ -84,6 +84,7 @@ module Holocron
         .to_h { |version| [version[:briefing_id], version] }
       section_counts = db[:briefing_sections]
         .where(briefing_version_id: current_versions.values.map { |version| version[:id] })
+        .exclude(section_type: "relationship_context", body: "")
         .group(:briefing_version_id)
         .select(:briefing_version_id, Sequel.function(:count, Sequel.lit("*")).as(:count))
         .to_hash(:briefing_version_id, :count)

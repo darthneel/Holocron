@@ -1507,10 +1507,39 @@ a:focus-visible {
   color: var(--peach);
 }
 
+.briefing-source-disclosure {
+  margin-top: 14px;
+}
+
+.briefing-sources-toggle {
+  min-height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--cool-strong);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.briefing-sources-toggle:hover {
+  color: var(--peach);
+}
+
+.briefing-sources-toggle svg {
+  width: 13px;
+  height: 13px;
+}
+
 .briefing-sources {
-  margin-top: 16px;
+  margin-top: 10px;
+  padding-left: 12px;
   display: grid;
   gap: 7px;
+  border-left: 2px solid var(--line-strong);
 }
 
 .briefing-sources > div {

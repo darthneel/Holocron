@@ -90,6 +90,12 @@ function briefingTalkingPoints(body: string) {
     .filter(Boolean);
 }
 
+function emptyBriefingSectionText(sectionType: string) {
+  if (sectionType === "prior_history") return "No prior interactions recorded.";
+  if (sectionType === "objectives") return "No suggested talking points generated.";
+  return "Not yet drafted.";
+}
+
 type RequestListItem = {
   id: string;
   status: string;
@@ -1398,6 +1404,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
   const [changeSummary, setChangeSummary] = useState("");
   const [reviewNotes, setReviewNotes] = useState("");
   const [pendingSources, setPendingSources] = useState<Record<number, string>>({});
+  const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
 
   const currentVersion = selectedBriefing?.versions.find(
     (version) => version.version_number === selectedBriefing.current_version_number,
@@ -1414,6 +1421,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
     setMode("view");
     setViewedVersionNumber(null);
     setReviewNotes("");
+    setExpandedSources({});
     await onSelect(id);
   }
 
@@ -1536,7 +1544,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
               </div>
 
               <div className="briefing-version-bar">
-                <label><span>Version</span><select value={viewedVersion.version_number} onChange={(event) => { setViewedVersionNumber(Number(event.target.value)); setMode("view"); }}>
+                <label><span>Version</span><select value={viewedVersion.version_number} onChange={(event) => { setViewedVersionNumber(Number(event.target.value)); setMode("view"); setExpandedSources({}); }}>
                   {selectedBriefing.versions.map((version) => <option key={version.id} value={version.version_number}>Version {version.version_number} · {briefingStatusLabels[version.status]}</option>)}
                 </select></label>
                 <div><strong>{viewedVersion.change_summary || `Version ${viewedVersion.version_number}`}</strong><span>{viewedVersion.created_by.display_name} · {formatDateTime(viewedVersion.created_at)}</span></div>
@@ -1583,7 +1591,9 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
               ) : (
                 <>
                   <div className="briefing-sections">
-                    {viewedVersion.sections.map((section) => (
+                    {viewedVersion.sections.filter((section) => (
+                      section.section_type !== "relationship_context" || Boolean(section.body)
+                    )).map((section) => (
                       <section className="briefing-content-section" key={section.id}>
                         <div><span>{briefingSectionLabels[section.section_type]}</span><h4>{section.title}</h4></div>
                         {section.body ? (
@@ -1592,8 +1602,20 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                               {briefingTalkingPoints(section.body).map((point, index) => <li key={`${section.id}-point-${index}`}>{point}</li>)}
                             </ul>
                           ) : <p>{section.body}</p>
-                        ) : <p className="muted-value">Not yet drafted.</p>}
-                        {section.sources.length > 0 ? <div className="briefing-sources">{section.sources.map((source) => <div key={`${source.source_type}-${source.source_id}`}><Link2 aria-hidden="true" /><span><strong>{source.source_label}</strong><small>{formatRelationshipType(source.source_type)}{source.source_excerpt ? ` · ${source.source_excerpt}` : ""}</small></span></div>)}</div> : null}
+                        ) : <p className="muted-value">{emptyBriefingSectionText(section.section_type)}</p>}
+                        {section.sources.length > 0 ? <div className="briefing-source-disclosure">
+                          <button
+                            className="briefing-sources-toggle"
+                            type="button"
+                            aria-expanded={Boolean(expandedSources[section.id])}
+                            aria-controls={`briefing-sources-${section.id}`}
+                            onClick={() => setExpandedSources((current) => ({...current, [section.id]: !current[section.id]}))}
+                          >
+                            <Link2 aria-hidden="true" />
+                            <span>{section.sources.length} {section.sources.length === 1 ? "source" : "sources"}</span>
+                          </button>
+                          {expandedSources[section.id] ? <div id={`briefing-sources-${section.id}`} className="briefing-sources">{section.sources.map((source) => <div key={`${source.source_type}-${source.source_id}`}><Link2 aria-hidden="true" /><span><strong>{source.source_label}</strong><small>{formatRelationshipType(source.source_type)}{source.source_excerpt ? ` · ${source.source_excerpt}` : ""}</small></span></div>)}</div> : null}
+                        </div> : null}
                       </section>
                     ))}
                   </div>

@@ -685,6 +685,33 @@ class HolocronAppTest < Minitest::Test
     assert_equal audit_count + 1, Holocron::Database.db[:audit_events].count
   end
 
+  def test_grounded_generation_derives_relationship_context_from_linked_records
+    briefing = create_briefing(isolated_request_overrides("relationship-context"))
+
+    post_json "/api/briefings/#{briefing.fetch('id')}/generate", {
+      expected_lock_version: briefing.fetch("lock_version")
+    }, actor_headers
+
+    assert last_response.ok?
+    version = parsed_response.fetch("versions").find { |candidate| candidate.fetch("version_number") == 2 }
+    relationship_context = version.fetch("sections").find { |section| section.fetch("section_type") == "relationship_context" }
+    assert_match(/are both affiliated with relationship-context organization/, relationship_context.fetch("body"))
+    assert_equal %w[organization person], relationship_context.fetch("sources").map { |source| source.fetch("source_type") }.uniq.sort
+  end
+
+  def test_briefing_list_omits_an_empty_relationship_context_from_its_section_count
+    briefing = create_briefing
+    version = briefing.fetch("versions").find { |candidate| candidate.fetch("version_number") == 1 }
+    Holocron::Database.db[:briefing_sections]
+      .where(briefing_version_id: version.fetch("id"), section_type: "relationship_context")
+      .update(body: "")
+
+    workspace = Holocron::Database.db[:workspaces].first
+    listed = Holocron::Briefings.list(workspace: workspace).find { |item| item.fetch(:id) == briefing.fetch("id") }
+
+    assert_equal 5, listed.fetch(:section_count)
+  end
+
   def test_briefing_schema_leaves_source_ref_uniqueness_to_application_validation
     source_refs = Holocron::BriefingGeneration::OUTPUT_SCHEMA
       .dig("properties", "sections", "items", "properties", "source_refs")
@@ -739,7 +766,7 @@ class HolocronAppTest < Minitest::Test
     version_count = db[:briefing_versions].where(briefing_id: briefing.fetch("id")).count
     provider_class = Struct.new(:name, :model) do
       def generate(prompt:, schema:, **_options)
-        section_types = %w[overview attendees relationship_context prior_history objectives logistics]
+        section_types = Holocron::BriefingGeneration::MODEL_SECTION_TYPES
         {
           output: {
             "sections" => section_types.map do |section_type|
@@ -793,7 +820,7 @@ class HolocronAppTest < Minitest::Test
       source.fetch("source_type") == "interaction" && source.dig("facts", "current_request")
     end
     output = {
-      "sections" => %w[overview attendees relationship_context prior_history objectives logistics].map do |section_type|
+      "sections" => Holocron::BriefingGeneration::MODEL_SECTION_TYPES.map do |section_type|
         current_history = section_type == "prior_history"
         {
           "section_type" => section_type,
@@ -809,7 +836,7 @@ class HolocronAppTest < Minitest::Test
 
     assert_equal(
       "Prior history may cite only interactions from before the current request.",
-      errors.fetch("sections.3.source_refs")
+      errors.fetch("sections.2.source_refs")
     )
   end
 

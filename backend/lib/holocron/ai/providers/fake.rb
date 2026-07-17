@@ -85,13 +85,6 @@ module Holocron
             role_suffix = roles.empty? ? "" : " (#{roles})"
             "#{facts.fetch('display_name')}#{suffix}#{role_suffix}"
           end
-          relationship_lines = people.filter_map do |person|
-            facts = person.fetch("facts")
-            details = [facts["job_title"], facts["organization_name"], facts["notes"]].compact
-            next if details.empty?
-
-            "#{facts.fetch('display_name')}: #{details.join('; ')}"
-          end
           history_lines = prior_interactions.map do |interaction|
             facts = interaction.fetch("facts")
             "#{facts.fetch('occurred_at')[0, 10]} - #{facts.fetch('summary')}"
@@ -111,7 +104,6 @@ module Holocron
           sections = [
             fake_section("overview", "Meeting overview", overview_lines, request && [request.fetch("source_ref")]),
             fake_section("attendees", "Attendees", attendee_lines, people_refs + organization_refs),
-            fake_section("relationship_context", "Relationship context", relationship_lines, people_refs + organization_refs),
             fake_section("prior_history", "Prior history", history_lines, interaction_refs),
             fake_section(
               "objectives",
