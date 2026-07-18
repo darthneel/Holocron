@@ -20,10 +20,12 @@ without allowing the model to search the database or write domain records.
 7. Request, meeting, person, organization, and interaction records become a
    bounded manifest with stable `SRC-nnn` handles and visible limitations.
 8. `BriefingGeneration` sends the versioned instructions, manifest, and strict
-   output schema through `ModelRouter`.
-9. Deterministic validation requires all material section types, rejects unknown
-   or irrelevant citations, and requires citations for every non-empty material
-   section.
+   output schema for five generated sections through `ModelRouter`.
+9. Deterministic validation requires overview, attendees, prior history,
+   objectives, and logistics; it rejects unknown or irrelevant citations and
+   requires citations for every non-empty material section. The application then
+   derives `relationship_context` from the manifest's people, organizations, and
+   prior interactions.
 10. The service reloads the briefing and rechecks `lock_version` after the model
    call.
 11. One short transaction advances the projection, appends the generated version
@@ -51,6 +53,8 @@ every other attendee out of the model context.
   access.
 - Manifest strings are explicitly treated as untrusted data.
 - The response may cite only supplied `SRC-nnn` handles.
+- The model does not generate `relationship_context`; application code derives
+  that section from the selected manifest records and attaches its citations.
 - Prior history may cite only interactions marked `current_request: false`.
 - Application code, not the model, resolves citations to stored source snapshots.
 - The model call cannot mutate a briefing. Persistence occurs only after output
@@ -86,7 +90,9 @@ every other attendee out of the model context.
   success/failure audits.
 - `backend/app.rb` exposes the generation command.
 - `app/page.tsx` automatically requests first generation after meeting creation
-  and exposes later generation in the briefing workbench.
+  and exposes later generation in the Briefings tab of the consolidated Meetings
+  workbench. Sources are available through per-section disclosures; empty
+  deterministic relationship-context sections are hidden from the reading view.
 - `backend/test/app_test.rb` covers generation, citations, retrieval limits,
   persistence, and failure audits.
 - `backend/eval/fixtures/briefing_generations.json` and

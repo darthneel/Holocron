@@ -60,23 +60,30 @@ npm run dev
 
 Open `http://localhost:3000`. The API runs on `http://localhost:9292`.
 
-Request extraction uses the deterministic fake provider by default. To use a
-real provider, export one of these configurations before starting the API:
+Request extraction and briefing generation use deterministic fake providers by
+default. To use a real provider, export the configuration for each task before
+starting the API:
 
 ```bash
 # Recommended: Vercel AI Gateway
 export AI_REQUEST_EXTRACTION_PROVIDER=vercel
 export AI_REQUEST_EXTRACTION_MODEL=openai/gpt-5.6-luna
+export AI_BRIEFING_GENERATION_PROVIDER=vercel
+export AI_BRIEFING_GENERATION_MODEL=openai/gpt-5.6-terra
 export AI_GATEWAY_API_KEY=...
 
 # Direct OpenAI alternative
 export AI_REQUEST_EXTRACTION_PROVIDER=openai
 export AI_REQUEST_EXTRACTION_MODEL=gpt-5.6-luna
+export AI_BRIEFING_GENERATION_PROVIDER=openai
+export AI_BRIEFING_GENERATION_MODEL=gpt-5.6-terra
 export OPENAI_API_KEY=...
 
 # OpenRouter alternative
 export AI_REQUEST_EXTRACTION_PROVIDER=openrouter
 export AI_REQUEST_EXTRACTION_MODEL=openai/gpt-5.6-luna
+export AI_BRIEFING_GENERATION_PROVIDER=openrouter
+export AI_BRIEFING_GENERATION_MODEL=openai/gpt-5.6-terra
 export OPENROUTER_API_KEY=...
 ```
 
@@ -142,6 +149,7 @@ POST /api/relationships/organizations
 POST /api/relationships/interactions
 GET  /api/briefings
 GET  /api/briefings/:id
+POST /api/briefings/:id/generate
 POST /api/briefings/:id/versions
 POST /api/briefings/:id/submit-review
 POST /api/briefings/:id/reviews
@@ -159,10 +167,12 @@ organizations by normalized name. A person can have one current organization;
 conflicting intake data returns `422` instead of silently changing it. Names
 alone never merge people.
 
-Only scheduled requests can produce meetings and briefings. Briefing edits
-append immutable versions; submission and review commands use `lock_version`
-and synchronously record audit events. Approval and changes-requested decisions
-belong to the exact version reviewed.
+Only scheduled requests can produce meetings and briefings. Meeting creation
+commits an editable deterministic version 1; the browser then separately calls
+the generation endpoint to append a grounded draft. Briefing edits append
+immutable versions; generation, submission, and review commands use
+`lock_version` and synchronously record audit events. Approval and
+changes-requested decisions belong to the exact version reviewed.
 
 Request extraction is synchronous and provider-neutral. The router supports a
 deterministic fake, the recommended Vercel AI Gateway, direct OpenAI, and optional

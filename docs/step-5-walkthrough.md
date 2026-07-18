@@ -37,8 +37,10 @@ section. Neither reviews nor sources need an independent lifecycle table.
   request when that fixture is available.
 - `backend/test/app_test.rb` traces successful and failed commands through the
   HTTP and database boundaries.
-- `app/page.tsx` provides request integration, the briefing queue, section and
-  source editing, version browsing, and review decisions.
+- `app/page.tsx` provides the consolidated Meetings workspace: scheduling
+  requests and briefings occupy internal tabs, the briefing list loads when its
+  tab opens, and the workbench provides section editing, source disclosures,
+  version browsing, and review decisions.
 - `app/globals.css` lays out the responsive operational briefing workspace.
 
 ## Failure Cases

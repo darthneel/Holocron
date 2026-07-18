@@ -260,9 +260,10 @@ sequenceDiagram
     Context-->>Briefings: Manifest + retrieval counts + limitations
     Briefings->>Router: Versioned prompt + strict section schema
     Router->>Model: Synchronous structured-output call
-    Model-->>Router: Sections + source_refs + limitations
+    Model-->>Router: Five generated sections + source_refs + limitations
     Router-->>Briefings: Provider result and usage
-    Briefings->>Briefings: Validate shape, citations, and source relevance
+    Briefings->>Briefings: Validate generated shape, citations, and source relevance
+    Briefings->>Briefings: Derive relationship context from the manifest
     alt Provider or validation failure
         Briefings->>DB: Write synchronous generation_failed audit
         Briefings-->>API: 502 without a new version
@@ -298,12 +299,15 @@ The manifest records omission counts and turns missing prior history into a
 visible limitation. Each selected record receives a stable `SRC-nnn` handle and
 includes the label, excerpt, and structured facts supplied to the model.
 
-The model call happens before the write transaction. Once output passes the
-strict response schema, application validation rejects unknown source handles,
-uncited non-empty sections, duplicate or missing section types, and citations
+The model call happens before the write transaction. The structured response
+contains five generated sections: overview, attendees, prior history, objectives,
+and logistics. Application validation rejects unknown source handles, uncited
+non-empty sections, duplicate or missing generated section types, and citations
 whose record type is irrelevant to the section. Prior history may cite only
-interactions marked as occurring before the current request. Citations are
-converted back to source snapshots; model-provided database IDs are never trusted.
+interactions marked as occurring before the current request. The application then
+derives `relationship_context` from selected people, organizations, and prior
+interactions in the manifest. Citations are converted back to source snapshots;
+model-provided database IDs are never trusted.
 
 The service then opens a short transaction and rechecks `lock_version`. A valid
 response therefore cannot overwrite a human edit made while the model was
@@ -311,3 +315,10 @@ running. Success advances the briefing projection, appends a complete immutable
 draft version, stores source snapshots with each section, and writes the audit
 event atomically. Provider and validation failures create no briefing version and
 write a separate synchronous failure audit.
+
+The Meetings workbench keeps scheduling requests and briefings together as two
+internal tabs. Briefing data is loaded only when the Briefings tab is opened.
+Within a briefing, source snapshots remain inspectable behind per-section source
+disclosures so the reading view foregrounds the brief itself. Empty deterministic
+relationship-context sections are hidden, while historical immutable versions
+remain unchanged.
