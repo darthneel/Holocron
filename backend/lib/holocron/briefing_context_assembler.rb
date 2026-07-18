@@ -3,10 +3,12 @@
 require "json"
 require "time"
 require_relative "database"
+require_relative "semantic_index"
 
 module Holocron
   class BriefingContextAssembler
-    CONTEXT_VERSION = "briefing-context-v1"
+    CONTEXT_VERSION = "briefing-context-v2"
+    RETRIEVAL_STRATEGIES = %w[linked_recency semantic].freeze
     MAX_PEOPLE = 12
     MAX_CURRENT_INTERACTIONS_PER_PERSON = 2
     MAX_PRIOR_INTERACTIONS_PER_PERSON = 5
@@ -16,8 +18,12 @@ module Holocron
 
     class NotFoundError < StandardError; end
 
-    def initialize(workspace:)
+    def initialize(workspace:, strategy: "linked_recency", embedding_provider: nil)
+      raise ArgumentError, "Unsupported retrieval strategy: #{strategy}." unless RETRIEVAL_STRATEGIES.include?(strategy)
+
       @workspace = workspace
+      @strategy = strategy
+      @embedding_provider = embedding_provider
       @db = Database.db
     end
 
@@ -32,7 +38,12 @@ module Holocron
 
       people, omitted_people = request_people(request[:id])
       organizations = request_organizations(people)
-      interactions, omitted_interactions = request_interactions(request[:id], people)
+      interactions, omitted_interactions, strategy_metadata = if @strategy == "semantic"
+        semantic_interactions(request: request, meeting: meeting, people: people)
+      else
+        selected, omitted = request_interactions(request[:id], people)
+        [selected, omitted, {}]
+      end
       candidate_windows = @db[:request_candidate_windows]
         .where(scheduling_request_id: request[:id])
         .order(:position)
@@ -65,8 +76,16 @@ module Holocron
 
       limitations = []
       limitations << "#{omitted_people} linked people were omitted by the context limit." if omitted_people.positive?
-      limitations << "#{omitted_interactions} interactions were omitted by recency or context limits." if omitted_interactions.positive?
-      limitations << "No prior interaction history was available for the linked people." if prior_interactions.zero?
+      if omitted_interactions.positive?
+        reason = @strategy == "semantic" ? "context limits" : "recency or context limits"
+        limitations << "#{omitted_interactions} interactions were omitted by #{reason}."
+      end
+      if prior_interactions.zero?
+        limitation = @strategy == "semantic" ?
+          "No semantically relevant prior interaction history was found in this workspace." :
+          "No prior interaction history was available for the linked people."
+        limitations << limitation
+      end
 
       manifest = {
         "context_version" => CONTEXT_VERSION,
@@ -77,12 +96,13 @@ module Holocron
         "sources" => sources,
         "limitations" => limitations,
         "retrieval" => {
+          "strategy" => @strategy,
           "linked_people_selected" => people.length,
           "linked_people_omitted" => omitted_people,
           "interactions_selected" => sources.count { |source| source["source_type"] == "interaction" },
           "interactions_omitted" => omitted_interactions,
           "source_count" => sources.length
-        }
+        }.merge(strategy_metadata)
       }
       manifest["retrieval"]["context_characters"] = JSON.generate(manifest).length
       manifest
@@ -161,6 +181,53 @@ module Holocron
       omitted = per_person.sum { |_interactions, count| count }
       omitted += [round_robin.length - MAX_INTERACTIONS, 0].max
       [selected, omitted]
+    end
+
+    def semantic_interactions(request:, meeting:, people:)
+      current = current_request_interactions(request[:id], people)
+      result = SemanticIndex.new(
+        workspace: @workspace,
+        embedding_provider: @embedding_provider
+      ).search_interactions(
+        query: semantic_query(request, meeting),
+        exclude_request_id: request[:id],
+        limit: MAX_INTERACTIONS - current.length
+      )
+      selected = (current + result.fetch(:interactions)).uniq { |interaction| interaction[:id] }.first(MAX_INTERACTIONS)
+      metadata = {
+        "semantic_records_indexed" => result[:indexed_records],
+        "semantic_records_refreshed" => result[:refreshed_records],
+        "embedding_provider" => result[:embedding_provider],
+        "embedding_model" => result[:embedding_model],
+        "vector_backend" => result[:vector_backend],
+        "embedding_indexing_tokens" => result[:indexing_tokens],
+        "embedding_query_tokens" => result[:query_tokens],
+        "minimum_similarity" => result[:minimum_similarity],
+        "semantic_matches_selected" => result.fetch(:interactions).length
+      }
+      [selected, 0, metadata]
+    end
+
+    def current_request_interactions(request_id, people)
+      people.flat_map do |person|
+        @db[:interactions]
+          .where(workspace_id: workspace_id, person_id: person[:id], scheduling_request_id: request_id)
+          .reverse_order(:occurred_at, :id)
+          .limit(MAX_CURRENT_INTERACTIONS_PER_PERSON)
+          .all
+          .map do |interaction|
+            interaction.merge(person_name: person[:display_name], current_request: true)
+          end
+      end
+    end
+
+    def semantic_query(request, meeting)
+      [
+        meeting[:title],
+        request[:purpose],
+        request[:availability_notes],
+        request[:original_request_text]
+      ].compact.join("\n")
     end
 
     def request_source(request, candidate_windows)
@@ -257,6 +324,7 @@ module Holocron
         "summary" => bounded(interaction[:summary], 2_000),
         "current_request" => interaction[:current_request]
       }
+      facts["semantic_similarity"] = interaction[:semantic_similarity].round(4) if interaction[:semantic_similarity]
       source(
         type: "interaction",
         id: interaction[:id],

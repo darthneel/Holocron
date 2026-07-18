@@ -113,6 +113,10 @@ module Holocron
               briefing_command(r, workspace, :review, identifier: id)
             end
 
+            r.post "evaluate-generation" do
+              briefing_command(r, workspace, :evaluate_version, identifier: id)
+            end
+
             r.get true do
               briefing = Briefings.fetch(id: id, workspace: workspace)
               unless briefing

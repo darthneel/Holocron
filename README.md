@@ -70,6 +70,8 @@ export AI_REQUEST_EXTRACTION_PROVIDER=vercel
 export AI_REQUEST_EXTRACTION_MODEL=openai/gpt-5.6-luna
 export AI_BRIEFING_GENERATION_PROVIDER=vercel
 export AI_BRIEFING_GENERATION_MODEL=openai/gpt-5.6-terra
+export AI_EMBEDDING_PROVIDER=vercel
+export AI_EMBEDDING_MODEL=openai/text-embedding-3-small
 export AI_GATEWAY_API_KEY=...
 
 # Direct OpenAI alternative
@@ -77,6 +79,8 @@ export AI_REQUEST_EXTRACTION_PROVIDER=openai
 export AI_REQUEST_EXTRACTION_MODEL=gpt-5.6-luna
 export AI_BRIEFING_GENERATION_PROVIDER=openai
 export AI_BRIEFING_GENERATION_MODEL=gpt-5.6-terra
+export AI_EMBEDDING_PROVIDER=openai
+export AI_EMBEDDING_MODEL=text-embedding-3-small
 export OPENAI_API_KEY=...
 
 # OpenRouter alternative
@@ -89,6 +93,15 @@ export OPENROUTER_API_KEY=...
 
 See `.env.example` for the non-secret defaults. The local server and live eval
 runner load the ignored `.env.local` file automatically.
+
+Briefings support two retrieval strategies. `linked_recency` follows explicit
+request-person relationships and recent interaction limits. `semantic` preserves
+the same essential linked facts, then ranks prior interactions inside the current
+workspace by embedding similarity. Neon creates a pgvector HNSW index; local
+PostgreSQL installations without pgvector use an array-backed development
+fallback with the same workspace filter and deterministic fake embeddings.
+Generated versions retain retrieval metadata and model usage so reviewers can
+compare useful cited claims per 1,000 input tokens for the same briefing.
 
 ## Live Request Extraction Evals
 

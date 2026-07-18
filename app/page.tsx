@@ -294,6 +294,20 @@ type BriefingVersion = {
     reviewed_by: {id: string; display_name: string};
     reviewed_at: string;
   } | null;
+  generation: {
+    retrieval_strategy: "linked_recency" | "semantic";
+    provider: string;
+    model: string;
+    prompt_version: string;
+    context_version: string;
+    input_tokens: number | null;
+    output_tokens: number | null;
+    duration_ms: number | null;
+    cited_claim_count: number;
+    useful_cited_claims: number | null;
+    useful_claims_per_1k_input_tokens: number | null;
+    retrieval: Record<string, string | number>;
+  } | null;
   sections: BriefingSectionData[];
   created_at: string;
 };
@@ -1096,10 +1110,19 @@ export default function Home() {
     return briefingCommand(`/api/briefings/${selectedBriefing.id}/versions`, payload);
   }
 
-  async function generateBriefing() {
+  async function generateBriefing(retrievalStrategy: "linked_recency" | "semantic") {
     if (!selectedBriefing) return false;
     return briefingCommand(`/api/briefings/${selectedBriefing.id}/generate`, {
       expected_lock_version: selectedBriefing.lock_version,
+      retrieval_strategy: retrievalStrategy,
+    });
+  }
+
+  async function evaluateBriefingGeneration(versionNumber: number, usefulCitedClaims: number) {
+    if (!selectedBriefing) return false;
+    return briefingCommand(`/api/briefings/${selectedBriefing.id}/evaluate-generation`, {
+      version_number: versionNumber,
+      useful_cited_claims: usefulCitedClaims,
     });
   }
 
@@ -1341,6 +1364,7 @@ export default function Home() {
             isSaving={isBriefingSaving}
             onSelect={selectBriefing}
             onGenerate={generateBriefing}
+            onEvaluate={evaluateBriefingGeneration}
             onSaveVersion={saveBriefingVersion}
             onSubmitReview={submitBriefingForReview}
             onReview={reviewBriefing}
@@ -1387,13 +1411,14 @@ export default function Home() {
   );
 }
 
-function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, onSelect, onGenerate, onSaveVersion, onSubmitReview, onReview }: {
+function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, onSelect, onGenerate, onEvaluate, onSaveVersion, onSubmitReview, onReview }: {
   briefings: BriefingListItem[];
   selectedBriefing: BriefingDetail | null;
   canMutate: boolean;
   isSaving: boolean;
   onSelect: (id: string) => Promise<void>;
-  onGenerate: () => Promise<boolean>;
+  onGenerate: (strategy: "linked_recency" | "semantic") => Promise<boolean>;
+  onEvaluate: (versionNumber: number, usefulCitedClaims: number) => Promise<boolean>;
   onSaveVersion: (payload: Record<string, unknown>) => Promise<boolean>;
   onSubmitReview: () => Promise<boolean>;
   onReview: (decision: string, notes: string) => Promise<boolean>;
@@ -1415,7 +1440,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
   const viewingCurrentVersion = Boolean(
     viewedVersion && selectedBriefing && viewedVersion.version_number === selectedBriefing.current_version_number,
   );
-  const hasGeneratedCurrentVersion = currentVersion?.change_summary === "AI-generated draft from grounded workspace context.";
+  const hasGeneratedCurrentVersion = Boolean(currentVersion?.generation);
 
   async function select(id: string) {
     setMode("view");
@@ -1491,8 +1516,8 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
     if (await onSubmitReview()) setViewedVersionNumber(null);
   }
 
-  async function generateDraft() {
-    if (await onGenerate()) {
+  async function generateDraft(strategy: "linked_recency" | "semantic") {
+    if (await onGenerate(strategy)) {
       setMode("view");
       setViewedVersionNumber(null);
     }
@@ -1550,11 +1575,25 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                 <div><strong>{viewedVersion.change_summary || `Version ${viewedVersion.version_number}`}</strong><span>{viewedVersion.created_by.display_name} · {formatDateTime(viewedVersion.created_at)}</span></div>
               </div>
 
+              {selectedBriefing.versions.some((version) => version.generation) ? (
+                <GenerationComparison
+                  key={`${selectedBriefing.id}-${selectedBriefing.lock_version}`}
+                  versions={selectedBriefing.versions}
+                  isSaving={isSaving}
+                  onEvaluate={onEvaluate}
+                />
+              ) : null}
+
               <div className="briefing-meeting-facts">
                 <div><CalendarCheck aria-hidden="true" /><span><small>Meeting</small><strong>{formatDateTime(selectedBriefing.meeting.starts_at)}</strong></span></div>
                 <div><Clock3 aria-hidden="true" /><span><small>Ends</small><strong>{formatDateTime(selectedBriefing.meeting.ends_at)}</strong></span></div>
                 <div><MapPin aria-hidden="true" /><span><small>Location</small><strong>{selectedBriefing.meeting.location || "Not specified"}</strong></span></div>
               </div>
+
+              <RetrievalBoundary
+                sources={viewedVersion.sections.flatMap((section) => section.sources)}
+                generation={viewedVersion.generation}
+              />
 
               {mode === "edit" ? (
                 <form className="briefing-editor" onSubmit={saveVersion}>
@@ -1624,8 +1663,8 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
 
                   {canMutate && viewingCurrentVersion ? (
                     <div className="briefing-actions">
-                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={generateDraft} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : hasGeneratedCurrentVersion ? "Regenerate draft" : "Generate draft"}</span></button><button className="icon-text-button" type="button" onClick={beginRevision} disabled={isSaving}><Save aria-hidden="true" /><span>Edit as new version</span></button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}><Send aria-hidden="true" /><span>{isSaving ? "Submitting" : "Submit for review"}</span></button></> : null}
-                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <><button className="icon-text-button" type="button" onClick={generateDraft} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate revision"}</span></button><button className="primary-command" type="button" onClick={beginRevision} disabled={isSaving}><Plus aria-hidden="true" /><span>Create revision</span></button></> : null}
+                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}><Link2 aria-hidden="true" /><span>{isSaving ? "Generating" : hasGeneratedCurrentVersion ? "Generate linked" : "Generate linked draft"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate semantic"}</span></button><button className="icon-text-button" type="button" onClick={beginRevision} disabled={isSaving}><Save aria-hidden="true" /><span>Edit as new version</span></button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}><Send aria-hidden="true" /><span>{isSaving ? "Submitting" : "Submit for review"}</span></button></> : null}
+                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}><Link2 aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate linked"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate semantic"}</span></button><button className="primary-command" type="button" onClick={beginRevision} disabled={isSaving}><Plus aria-hidden="true" /><span>Create revision</span></button></> : null}
                       {selectedBriefing.status === "in_review" ? <div className="briefing-review-form"><Field label="Review notes"><textarea rows={2} value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} /></Field><div><button className="icon-text-button" type="button" onClick={() => decide("changes_requested")} disabled={isSaving || !reviewNotes.trim()}><XCircle aria-hidden="true" /><span>Request changes</span></button><button className="primary-command" type="button" onClick={() => decide("approved")} disabled={isSaving}><CheckCircle2 aria-hidden="true" /><span>{isSaving ? "Saving" : "Approve version"}</span></button></div></div> : null}
                     </div>
                   ) : null}
@@ -1636,6 +1675,78 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
         </div>
       </div>
     </section>
+  );
+}
+
+function GenerationComparison({ versions, isSaving, onEvaluate }: {
+  versions: BriefingVersion[];
+  isSaving: boolean;
+  onEvaluate: (versionNumber: number, usefulCitedClaims: number) => Promise<boolean>;
+}) {
+  const compared = (["linked_recency", "semantic"] as const).map((strategy) => ({
+    strategy,
+    version: versions.find((candidate) => candidate.generation?.retrieval_strategy === strategy) ?? null,
+  }));
+  const [ratings, setRatings] = useState<Record<number, string>>(() => Object.fromEntries(
+    compared.filter((item) => item.version).map((item) => [
+      item.version!.version_number,
+      item.version!.generation!.useful_cited_claims?.toString() ?? "",
+    ]),
+  ));
+
+  async function saveRating(version: BriefingVersion) {
+    const value = Number(ratings[version.version_number]);
+    if (!Number.isInteger(value) || value < 0) return;
+    await onEvaluate(version.version_number, value);
+  }
+
+  return (
+    <section className="generation-comparison" aria-labelledby="generation-comparison-title">
+      <div className="generation-comparison-heading"><div><p className="eyebrow">Control / treatment</p><strong id="generation-comparison-title">Retrieval efficiency</strong></div><span>Useful cited claims ÷ input tokens</span></div>
+      <div className="generation-comparison-grid">
+        {compared.map(({strategy, version}) => (
+          <article key={strategy} className={version ? "has-generation" : "is-empty"}>
+            <div className="generation-strategy"><span>{strategy === "semantic" ? <Sparkles aria-hidden="true" /> : <Link2 aria-hidden="true" />}{strategy === "semantic" ? "Semantic" : "Linked + recent"}</span>{version ? <small>Version {version.version_number}</small> : null}</div>
+            {!version || !version.generation ? <p>Generate this path to add it to the comparison.</p> : <>
+              <div className="generation-metrics">
+                <div><span>Input</span><strong>{version.generation.input_tokens ?? "—"}</strong><small>tokens</small></div>
+                <div><span>Cited</span><strong>{version.generation.cited_claim_count}</strong><small>claims</small></div>
+                <div><span>Context</span><strong>{version.generation.retrieval.context_characters ?? "—"}</strong><small>characters</small></div>
+                <div><span>Efficiency</span><strong>{version.generation.useful_claims_per_1k_input_tokens ?? "—"}</strong><small>per 1k tokens</small></div>
+              </div>
+              <div className="generation-rating">
+                <label htmlFor={`useful-claims-${version.version_number}`}>Useful cited claims</label>
+                <div><input id={`useful-claims-${version.version_number}`} type="number" min="0" max={version.generation.cited_claim_count} value={ratings[version.version_number] ?? ""} onChange={(event) => setRatings((current) => ({...current, [version.version_number]: event.target.value}))} placeholder={`0–${version.generation.cited_claim_count}`} /><button type="button" className="subtle-command" onClick={() => saveRating(version)} disabled={isSaving || ratings[version.version_number] === ""}>Save rating</button></div>
+              </div>
+            </>}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RetrievalBoundary({ sources, generation }: { sources: BriefingSource[]; generation: BriefingVersion["generation"] }) {
+  const uniqueSources = Array.from(new Map(sources.map((source) => [`${source.source_type}:${source.source_id}`, source])).values());
+  const people = uniqueSources.filter((source) => source.source_type === "person").length;
+  const organizations = uniqueSources.filter((source) => source.source_type === "organization").length;
+  const interactions = uniqueSources.filter((source) => source.source_type === "interaction").length;
+  const semantic = generation?.retrieval_strategy === "semantic";
+
+  return (
+    <aside className="retrieval-boundary" aria-label="Retrieval boundary">
+      <div className="retrieval-boundary-heading">
+        <div><p className="eyebrow">Retrieval boundary</p><strong>Why this context is here</strong></div>
+        <span className="retrieval-mode">{semantic ? <Sparkles aria-hidden="true" /> : <Link2 aria-hidden="true" />}{semantic ? "Semantic" : "Exact links"}</span>
+      </div>
+      <div className="retrieval-boundary-grid">
+        <div><strong>{people}</strong><span>linked {people === 1 ? "person" : "people"}</span></div>
+        <div><strong>{organizations}</strong><span>linked {organizations === 1 ? "organization" : "organizations"}</span></div>
+        <div><strong>{interactions}</strong><span>history records</span></div>
+      </div>
+      <p>{semantic ? "This version preserves verified request links, then ranks prior interactions by semantic similarity inside the current workspace only." : "This version follows explicit person and organization links, then selects recent interactions. It does not search the workspace for older or unlinked semantic matches."}</p>
+      <div className="retrieval-demo-cue"><Sparkles aria-hidden="true" /><span><strong>{semantic ? "Semantic evidence" : "Control path"}</strong> {semantic ? `${generation?.retrieval.semantic_matches_selected ?? interactions} similarity-ranked interactions were selected at a minimum score of ${generation?.retrieval.minimum_similarity ?? "—"}.` : "Generate a semantic version of this same briefing to compare context size, citations, and model input tokens."}</span></div>
+    </aside>
   );
 }
 

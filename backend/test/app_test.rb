@@ -14,6 +14,8 @@ ENV["AI_REQUEST_EXTRACTION_PROVIDER"] = "fake"
 ENV["AI_REQUEST_EXTRACTION_MODEL"] = "fake-request-extractor-v1"
 ENV["AI_BRIEFING_GENERATION_PROVIDER"] = "fake"
 ENV["AI_BRIEFING_GENERATION_MODEL"] = "fake-briefing-generator-v1"
+ENV["AI_EMBEDDING_PROVIDER"] = "fake"
+ENV["AI_EMBEDDING_MODEL"] = "fake-semantic-embedding-v1"
 
 require_relative "../app"
 
@@ -258,6 +260,39 @@ class HolocronAppTest < Minitest::Test
     assert_equal "resp_test", result.fetch(:provider_request_id)
     assert_equal 10, result.fetch(:input_tokens)
     assert_equal 4, result.fetch(:output_tokens)
+  end
+
+  def test_embedding_provider_posts_openai_compatible_batch_request
+    transport = lambda do |uri, body, headers|
+      assert_equal "/v1/embeddings", uri.path
+      assert_equal "Bearer test-key", headers.fetch("Authorization")
+      request = JSON.parse(body)
+      assert_equal "text-embedding-test", request.fetch("model")
+      assert_equal ["first", "second"], request.fetch("input")
+      assert_equal 1536, request.fetch("dimensions")
+      vector = Array.new(1536, 0.0)
+      {
+        status: 200,
+        body: JSON.generate(
+          model: "text-embedding-test-2026",
+          data: [{index: 1, embedding: vector}, {index: 0, embedding: vector}],
+          usage: {prompt_tokens: 2}
+        )
+      }
+    end
+    provider = Holocron::AI::Embeddings::HttpProvider.new(
+      name: "openai",
+      endpoint: "https://api.openai.com/v1/embeddings",
+      api_key: "test-key",
+      model: "text-embedding-test",
+      transport: transport
+    )
+
+    result = Holocron::AI::Embeddings.embed(%w[first second], provider: provider)
+
+    assert_equal 2, result.vectors.length
+    assert_equal "text-embedding-test-2026", result.model
+    assert_equal 2, result.input_tokens
   end
 
   def test_model_router_retries_a_response_without_structured_output
@@ -660,7 +695,7 @@ class HolocronAppTest < Minitest::Test
     assert_equal version_count + 1, Holocron::Database.db[:briefing_versions].where(briefing_id: briefing.fetch("id")).count
 
     version = generated.fetch("versions").find { |candidate| candidate.fetch("version_number") == 2 }
-    assert_equal "AI-generated draft from grounded workspace context.", version.fetch("change_summary")
+    assert_equal "AI-generated draft using linked and recent workspace context.", version.fetch("change_summary")
     section_types = version.fetch("sections").map { |section| section.fetch("section_type") }
     assert_equal %w[overview attendees relationship_context prior_history objectives logistics notes], section_types
     material_sections = version.fetch("sections").reject { |section| section.fetch("section_type") == "notes" }
@@ -683,6 +718,109 @@ class HolocronAppTest < Minitest::Test
     assert_equal 2, payload.fetch("version_number")
     assert_operator payload.dig("retrieval", "source_count"), :>=, 4
     assert_equal audit_count + 1, Holocron::Database.db[:audit_events].count
+  end
+
+  def test_same_briefing_can_compare_linked_and_semantic_generations
+    briefing = create_briefing(isolated_request_overrides("retrieval-comparison"))
+
+    post_json "/api/briefings/#{briefing.fetch('id')}/generate", {
+      expected_lock_version: briefing.fetch("lock_version"),
+      retrieval_strategy: "linked_recency"
+    }, actor_headers
+    assert last_response.ok?
+    linked = parsed_response
+
+    post_json "/api/briefings/#{briefing.fetch('id')}/generate", {
+      expected_lock_version: linked.fetch("lock_version"),
+      retrieval_strategy: "semantic"
+    }, actor_headers
+    assert last_response.ok?, last_response.body
+    compared = parsed_response
+
+    linked_version = compared.fetch("versions").find do |version|
+      version.dig("generation", "retrieval_strategy") == "linked_recency"
+    end
+    semantic_version = compared.fetch("versions").find do |version|
+      version.dig("generation", "retrieval_strategy") == "semantic"
+    end
+    refute_nil linked_version
+    refute_nil semantic_version
+    assert_operator linked_version.dig("generation", "input_tokens"), :>, 0
+    assert_operator semantic_version.dig("generation", "input_tokens"), :>, 0
+    assert_equal "postgres_array_local", semantic_version.dig("generation", "retrieval", "vector_backend")
+    assert_equal "semantic", semantic_version.dig("generation", "retrieval", "strategy")
+
+    useful_claims = [semantic_version.dig("generation", "cited_claim_count"), 1].min
+    post_json "/api/briefings/#{briefing.fetch('id')}/evaluate-generation", {
+      version_number: semantic_version.fetch("version_number"),
+      useful_cited_claims: useful_claims
+    }, actor_headers
+    assert last_response.ok?
+    evaluated = parsed_response.fetch("versions").find do |version|
+      version.fetch("version_number") == semantic_version.fetch("version_number")
+    end
+    assert_equal useful_claims, evaluated.dig("generation", "useful_cited_claims")
+    assert_operator evaluated.dig("generation", "useful_claims_per_1k_input_tokens"), :>=, 0
+  end
+
+  def test_semantic_retrieval_never_crosses_workspace_boundary
+    db = Holocron::Database.db
+    now = Time.now.utc
+    foreign_workspace_id = SecureRandom.uuid
+    foreign_member_id = SecureRandom.uuid
+    foreign_person_id = SecureRandom.uuid
+    foreign_interaction_id = SecureRandom.uuid
+    db[:workspaces].insert(
+      id: foreign_workspace_id,
+      slug: "foreign-#{SecureRandom.hex(4)}",
+      name: "Foreign workspace",
+      timezone: "UTC",
+      retention_days: 365,
+      created_at: now,
+      updated_at: now
+    )
+    db[:workspace_members].insert(
+      id: foreign_member_id,
+      workspace_id: foreign_workspace_id,
+      display_name: "Foreign owner",
+      email: "foreign-#{SecureRandom.hex(4)}@example.org",
+      role: "owner",
+      status: "active",
+      created_at: now,
+      updated_at: now
+    )
+    db[:people].insert(
+      id: foreign_person_id,
+      workspace_id: foreign_workspace_id,
+      created_by_workspace_member_id: foreign_member_id,
+      display_name: "Foreign person",
+      notes: "private workspace record",
+      created_at: now,
+      updated_at: now
+    )
+    db[:interactions].insert(
+      id: foreign_interaction_id,
+      workspace_id: foreign_workspace_id,
+      person_id: foreign_person_id,
+      authored_by_workspace_member_id: foreign_member_id,
+      interaction_type: "note",
+      summary: "Confidential solar permitting strategy",
+      source_type: "manual",
+      occurred_at: now,
+      created_at: now,
+      updated_at: now
+    )
+
+    foreign_workspace = db[:workspaces].where(id: foreign_workspace_id).first
+    Holocron::SemanticIndex.new(workspace: foreign_workspace).refresh_interactions!
+    current_workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
+    result = Holocron::SemanticIndex.new(workspace: current_workspace).search_interactions(
+      query: "Confidential solar permitting strategy",
+      limit: 10
+    )
+
+    refute_includes result.fetch(:interactions).map { |interaction| interaction[:id] }, foreign_interaction_id
+    assert db[:semantic_documents].where(workspace_id: foreign_workspace_id, source_id: foreign_interaction_id).any?
   end
 
   def test_grounded_generation_derives_relationship_context_from_linked_records

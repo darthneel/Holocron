@@ -13,6 +13,7 @@ module Holocron
     STATUSES = %w[draft in_review approved changes_requested].freeze
     SECTION_TYPES = %w[overview attendees relationship_context prior_history objectives logistics notes].freeze
     SOURCE_TYPES = %w[scheduling_request meeting person organization interaction].freeze
+    RETRIEVAL_STRATEGIES = BriefingContextAssembler::RETRIEVAL_STRATEGIES
 
     class ValidationError < StandardError
       attr_reader :fields
@@ -246,13 +247,17 @@ module Holocron
 
     def generate_version(id:, attributes:, workspace:, actor:, router: nil)
       expected = expected_lock_version(attributes)
+      strategy = optional_text(attributes["retrieval_strategy"], limit: 40) || "linked_recency"
+      unless RETRIEVAL_STRATEGIES.include?(strategy)
+        raise ValidationError, {"retrieval_strategy" => "Select linked/recency or semantic retrieval."}
+      end
       db = Database.db
       briefing = db[:briefings].where(id: id, workspace_id: workspace[:id]).first
       return nil unless briefing
 
       verify_lock!(briefing, expected)
       ensure_editable!(briefing)
-      manifest = BriefingContextAssembler.new(workspace: workspace).call(briefing: briefing)
+      manifest = BriefingContextAssembler.new(workspace: workspace, strategy: strategy).call(briefing: briefing)
       outcome = BriefingGeneration.generate(manifest: manifest, router: router)
       unless outcome.status == "succeeded"
         record_generation_failure(
@@ -290,9 +295,12 @@ module Holocron
           actor: actor,
           version_number: next_version_number,
           status: "draft",
-          change_summary: "AI-generated draft from grounded workspace context.",
+          change_summary: strategy == "semantic" ?
+            "AI-generated draft using semantic workspace retrieval." :
+            "AI-generated draft using linked and recent workspace context.",
           sections: outcome.sections,
-          occurred_at: now
+          occurred_at: now,
+          generation: generation_metadata(outcome: outcome, manifest: manifest)
         )
         write_audit(
           workspace: workspace,
@@ -311,6 +319,51 @@ module Holocron
         )
       end
 
+      fetch(id: id, workspace: workspace)
+    rescue AI::ConfigurationError, AI::ProviderError, AI::TransientError => error
+      raise GenerationError.new(
+        "Semantic retrieval failed: #{error.message}",
+        provider: ENV.fetch("AI_EMBEDDING_PROVIDER", "fake"),
+        model: ENV.fetch("AI_EMBEDDING_MODEL", "unconfigured"),
+        validation_errors: {}
+      )
+    end
+
+    def evaluate_version(id:, attributes:, workspace:, actor:)
+      version_number = Integer(attributes["version_number"], exception: false)
+      useful_claims = Integer(attributes["useful_cited_claims"], exception: false)
+      raise ValidationError, {"version_number" => "Select a generated version."} unless version_number&.positive?
+      raise ValidationError, {"useful_cited_claims" => "Enter a non-negative useful claim count."} unless useful_claims&.>= 0
+
+      db = Database.db
+      briefing = db[:briefings].where(id: id, workspace_id: workspace[:id]).first
+      return nil unless briefing
+      version = db[:briefing_versions].where(briefing_id: id, version_number: version_number).first
+      raise ValidationError, {"version_number" => "Select a generated version."} unless version&.fetch(:retrieval_strategy, nil)
+      if useful_claims > version[:cited_claim_count].to_i
+        raise ValidationError, {"useful_cited_claims" => "Useful claims cannot exceed the #{version[:cited_claim_count]} cited claims."}
+      end
+
+      now = Time.now.utc
+      db.transaction do
+        db[:briefing_versions].where(id: version[:id]).update(useful_cited_claims: useful_claims)
+        write_audit(
+          workspace: workspace,
+          actor: actor,
+          event_type: "briefing.generation_evaluated",
+          subject_type: "briefing",
+          subject_id: id,
+          payload: {
+            version_id: version[:id],
+            version_number: version_number,
+            retrieval_strategy: version[:retrieval_strategy],
+            useful_cited_claims: useful_claims,
+            cited_claim_count: version[:cited_claim_count]
+          },
+          correlation_id: SecureRandom.uuid,
+          occurred_at: now
+        )
+      end
       fetch(id: id, workspace: workspace)
     end
 
@@ -613,7 +666,7 @@ module Holocron
       ]
     end
 
-    def insert_version(briefing_id:, actor:, version_number:, status:, change_summary:, sections:, occurred_at:)
+    def insert_version(briefing_id:, actor:, version_number:, status:, change_summary:, sections:, occurred_at:, generation: nil)
       db = Database.db
       version_id = SecureRandom.uuid
       db[:briefing_versions].insert(
@@ -623,6 +676,7 @@ module Holocron
         version_number: version_number,
         status: status,
         change_summary: change_summary,
+        **(generation || {}),
         created_at: occurred_at
       )
       sections.each_with_index do |section, position|
@@ -695,6 +749,36 @@ module Holocron
         version_id: version_id,
         version_number: version_number
       }.compact
+    end
+
+    def generation_metadata(outcome:, manifest:)
+      {
+        retrieval_strategy: manifest.dig("retrieval", "strategy"),
+        generation_provider: outcome.provider,
+        generation_model: outcome.model,
+        prompt_version: BriefingGeneration::PROMPT_VERSION,
+        context_version: manifest["context_version"],
+        provider_request_id: outcome.provider_request_id,
+        attempt_count: outcome.attempt_count,
+        input_tokens: outcome.input_tokens,
+        output_tokens: outcome.output_tokens,
+        duration_ms: outcome.duration_ms,
+        retrieval_json: JSON.generate(manifest["retrieval"]),
+        cited_claim_count: count_cited_claims(outcome.sections)
+      }
+    end
+
+    def count_cited_claims(sections)
+      sections.sum do |section|
+        next 0 if section[:sources].nil? || section[:sources].empty?
+
+        section[:body].to_s.lines.sum do |line|
+          normalized = line.strip.sub(/\A[-*]\s+/, "")
+          next 0 if normalized.empty?
+
+          [normalized.split(/(?<=[.!?])\s+/).length, 1].max
+        end
+      end
     end
 
     def verify_lock!(briefing, expected)
@@ -795,6 +879,20 @@ module Holocron
           reviewed_by: serialize_member(reviewer),
           reviewed_at: iso8601(version[:reviewed_at])
         },
+        generation: version[:retrieval_strategy] && {
+          retrieval_strategy: version[:retrieval_strategy],
+          provider: version[:generation_provider],
+          model: version[:generation_model],
+          prompt_version: version[:prompt_version],
+          context_version: version[:context_version],
+          input_tokens: version[:input_tokens],
+          output_tokens: version[:output_tokens],
+          duration_ms: version[:duration_ms],
+          cited_claim_count: version[:cited_claim_count],
+          useful_cited_claims: version[:useful_cited_claims],
+          useful_claims_per_1k_input_tokens: useful_claims_per_1k_tokens(version),
+          retrieval: parse_json_object(version[:retrieval_json])
+        },
         sections: sections,
         created_at: iso8601(version[:created_at])
       }
@@ -824,6 +922,19 @@ module Holocron
       end
     rescue JSON::ParserError
       []
+    end
+
+    def parse_json_object(value)
+      parsed = JSON.parse(value || "{}")
+      parsed.is_a?(Hash) ? parsed : {}
+    rescue JSON::ParserError
+      {}
+    end
+
+    def useful_claims_per_1k_tokens(version)
+      return nil unless version[:useful_cited_claims] && version[:input_tokens].to_i.positive?
+
+      ((version[:useful_cited_claims].to_f / version[:input_tokens]) * 1_000).round(2)
     end
 
     def write_audit(workspace:, actor:, event_type:, subject_type:, subject_id:, payload:, correlation_id:, occurred_at:)
