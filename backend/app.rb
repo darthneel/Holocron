@@ -3,6 +3,7 @@
 require "json"
 require "roda"
 require "uri"
+require_relative "lib/holocron/http_middleware"
 require_relative "lib/holocron/database"
 require_relative "lib/holocron/briefings"
 require_relative "lib/holocron/relationships"
@@ -12,23 +13,16 @@ require_relative "lib/holocron/scheduling_request_workflow"
 
 module Holocron
   class App < Roda
+    use RequestIdMiddleware
+    use CorsMiddleware
+    use JsonErrorMiddleware
+
     plugin :all_verbs
     plugin :json
 
     EMAIL_PATTERN = URI::MailTo::EMAIL_REGEXP
-    DEFAULT_FRONTEND_ORIGIN = "http://localhost:3000"
-    LOCAL_FRONTEND_ORIGIN = %r{\Ahttp://(?:localhost|127\.0\.0\.1)(?::\d+)?\z}
 
     route do |r|
-      response["Access-Control-Allow-Origin"] = allowed_frontend_origin(r)
-      response["Access-Control-Allow-Headers"] = "Content-Type, X-Holocron-Actor-Email"
-      response["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS"
-      response["Vary"] = "Origin"
-
-      r.options do
-        ""
-      end
-
       r.get "health" do
         {status: "ok", service: "holocron-api"}
       end
@@ -364,13 +358,6 @@ module Holocron
     end
 
     private
-
-    def allowed_frontend_origin(request)
-      return ENV["FRONTEND_ORIGIN"] if ENV.key?("FRONTEND_ORIGIN")
-
-      request_origin = request.env["HTTP_ORIGIN"]
-      request_origin&.match?(LOCAL_FRONTEND_ORIGIN) ? request_origin : DEFAULT_FRONTEND_ORIGIN
-    end
 
     def parse_json_body(request)
       raw_body = request.body.read

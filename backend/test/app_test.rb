@@ -61,9 +61,26 @@ class HolocronAppTest < Minitest::Test
     header "Origin", "http://localhost:3001"
     options "/api/fake-session"
 
-    assert last_response.ok?
+    assert_equal 204, last_response.status
     assert_equal "http://localhost:3001", last_response.headers.fetch("Access-Control-Allow-Origin")
     assert_includes last_response.headers.fetch("Access-Control-Allow-Headers"), "X-Holocron-Actor-Email"
+    assert last_response.headers.fetch("X-Request-ID")
+  end
+
+  def test_disallowed_frontend_origin_does_not_receive_cors_access
+    header "Origin", "https://untrusted.example"
+    get "/health"
+
+    assert last_response.ok?
+    refute last_response.headers.key?("Access-Control-Allow-Origin")
+    assert_equal "Origin", last_response.headers.fetch("Vary")
+  end
+
+  def test_supplied_request_id_is_returned
+    header "X-Request-ID", "test-request-123"
+    get "/health"
+
+    assert_equal "test-request-123", last_response.headers.fetch("X-Request-ID")
   end
 
   def test_foundation_exposes_one_principal_and_workspace_members
@@ -821,6 +838,28 @@ class HolocronAppTest < Minitest::Test
 
     refute_includes result.fetch(:interactions).map { |interaction| interaction[:id] }, foreign_interaction_id
     assert db[:semantic_documents].where(workspace_id: foreign_workspace_id, source_id: foreign_interaction_id).any?
+  end
+
+  def test_semantic_backfill_batches_and_is_idempotent
+    db = Holocron::Database.db
+    workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
+    interaction_count = db[:interactions].where(workspace_id: workspace.fetch(:id)).count
+    db[:semantic_documents].where(workspace_id: workspace.fetch(:id)).delete
+    previous_batch_size = ENV["SEMANTIC_EMBEDDING_BATCH_SIZE"]
+    ENV["SEMANTIC_EMBEDDING_BATCH_SIZE"] = "2"
+
+    index = Holocron::SemanticIndex.new(workspace: workspace)
+    first = index.refresh_interactions!
+    second = index.refresh_interactions!
+
+    assert_equal interaction_count, first.fetch(:indexed_records)
+    assert_equal interaction_count, first.fetch(:refreshed_records)
+    assert_operator first.fetch(:embedding_tokens), :>, 0
+    assert_equal interaction_count, db[:semantic_documents].where(workspace_id: workspace.fetch(:id)).count
+    assert_equal 0, second.fetch(:refreshed_records)
+    assert_equal 0, second.fetch(:embedding_tokens)
+  ensure
+    ENV["SEMANTIC_EMBEDDING_BATCH_SIZE"] = previous_batch_size
   end
 
   def test_grounded_generation_derives_relationship_context_from_linked_records

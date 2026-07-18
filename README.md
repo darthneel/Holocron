@@ -60,6 +60,19 @@ npm run dev
 
 Open `http://localhost:3000`. The API runs on `http://localhost:9292`.
 
+The browser calls the API directly; there is no frontend proxy. Locally, API
+CORS accepts localhost and 127.0.0.1 origins on any port when no allowlist is
+configured. In production, configure an explicit comma-separated allowlist:
+
+```bash
+FRONTEND_ORIGINS=https://holocron.example.com
+NEXT_PUBLIC_API_URL=https://api.holocron.example.com
+```
+
+The Rack API runs on Puma. `PUMA_MIN_THREADS`, `PUMA_MAX_THREADS`, and
+`WEB_CONCURRENCY` can be adjusted for the Render service; the defaults are
+`1`, `5`, and `0` respectively.
+
 Request extraction and briefing generation use deterministic fake providers by
 default. To use a real provider, export the configuration for each task before
 starting the API:
@@ -102,6 +115,22 @@ PostgreSQL installations without pgvector use an array-backed development
 fallback with the same workspace filter and deterministic fake embeddings.
 Generated versions retain retrieval metadata and model usage so reviewers can
 compare useful cited claims per 1,000 input tokens for the same briefing.
+
+To backfill embeddings for all existing interactions, configure a real embedding
+provider in `.env.local`, apply migrations, and run:
+
+```bash
+cd backend
+bundle exec rake db:migrate
+bin/backfill-semantic-index
+```
+
+The command is idempotent: it embeds only missing records, changed content, or
+records stored with a different embedding model. Set `WORKSPACE_SLUG=slug` to
+backfill one workspace. For local demonstration data only, set
+`ALLOW_FAKE_EMBEDDING_BACKFILL=1`; production backfills refuse the fake provider
+by default. Requests are sent in batches controlled by
+`SEMANTIC_EMBEDDING_BATCH_SIZE` (default `100`).
 
 ## Live Request Extraction Evals
 

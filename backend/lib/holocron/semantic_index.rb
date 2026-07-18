@@ -10,6 +10,7 @@ module Holocron
   class SemanticIndex
     DEFAULT_LIMIT = 8
     DEFAULT_MINIMUM_SIMILARITY = 0.18
+    DEFAULT_EMBEDDING_BATCH_SIZE = 100
 
     def initialize(workspace:, embedding_provider: nil)
       @workspace = workspace
@@ -81,11 +82,11 @@ module Holocron
       end
 
       embedding_tokens = 0
-      unless stale.empty?
-        embedded = AI::Embeddings.embed(stale.map { |document| document[:content] }, provider: provider)
-        embedding_tokens = embedded.input_tokens.to_i
+      stale.each_slice(embedding_batch_size) do |batch|
+        embedded = AI::Embeddings.embed(batch.map { |document| document[:content] }, provider: provider)
+        embedding_tokens += embedded.input_tokens.to_i
         now = Time.now.utc
-        stale.each_with_index do |document, index|
+        batch.each_with_index do |document, index|
           values = {
             content: document[:content],
             content_hash: document[:content_hash],
@@ -160,6 +161,14 @@ module Holocron
       @workspace.fetch(:id)
     end
 
+    def embedding_batch_size
+      configured = Integer(
+        ENV.fetch("SEMANTIC_EMBEDDING_BATCH_SIZE", DEFAULT_EMBEDDING_BATCH_SIZE.to_s),
+        exception: false
+      )
+      configured && configured.positive? ? configured : DEFAULT_EMBEDDING_BATCH_SIZE
+    end
+
     def vector_literal(vector)
       "[#{vector.map { |value| format('%.9f', value) }.join(',')}]"
     end
@@ -169,9 +178,10 @@ module Holocron
         .where(workspace_id: workspace_id, source_type: "interaction", embedding_model: model)
       if pgvector?
         distance = Sequel.lit("embedding <=> ?::vector", vector)
+        similarity = Sequel.lit("1.0 - (embedding <=> ?::vector)", vector)
         dataset
           .select_all(:semantic_documents)
-          .select_append(Sequel.as(1.0 - distance, :similarity))
+          .select_append(Sequel.as(similarity, :similarity))
           .order(distance)
           .limit(limit)
           .all

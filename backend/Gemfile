@@ -7,7 +7,7 @@ gem "rake"
 gem "roda"
 gem "sequel"
 gem "pg"
-gem "webrick"
+gem "puma"
 
 group :test do
   gem "minitest"

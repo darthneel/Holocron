@@ -20,4 +20,4 @@ BUNDLE_BIN="$(dirname "$RUBY_BIN")/bundle"
 export PATH="$(dirname "$RUBY_BIN"):$PATH"
 
 cd "$ROOT"
-exec "$BUNDLE_BIN" exec puma --config config/puma.rb config.ru
+exec "$BUNDLE_BIN" exec "$RUBY_BIN" script/backfill_semantic_index.rb "$@"
