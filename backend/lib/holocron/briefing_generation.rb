@@ -5,7 +5,7 @@ require_relative "ai/model_router"
 
 module Holocron
   module BriefingGeneration
-    PROMPT_VERSION = "grounded-briefing-v1"
+    PROMPT_VERSION = "grounded-briefing-v2"
     SECTION_DEFINITIONS = {
       "overview" => "Meeting overview",
       "attendees" => "Attendees",
@@ -91,6 +91,18 @@ module Holocron
     end
 
     def prompt(manifest)
+      hybrid_instructions = if manifest.dig("retrieval", "strategy") == "hybrid"
+        <<~HYBRID
+
+          This is a hybrid-retrieval briefing. The manifest includes section_source_refs; each
+          section may cite only the source_refs assigned to that section. Format prior_history as
+          chronological bullets from oldest to newest, with one event per line prefixed by "- ".
+          Use the attendee-balanced history to make objectives specific, but phrase every objective
+          as a suggested talking point rather than an established fact.
+        HYBRID
+      else
+        ""
+      end
       {
         task: "briefing_generation",
         instructions: <<~PROMPT.strip,
@@ -110,6 +122,7 @@ module Holocron
           false; current-request interactions describe intake, not prior relationship history.
           Leave a section body empty when the context cannot support useful content. Put important
           missing-context disclosures in limitations. Return only the required structured output.
+          #{hybrid_instructions}
         PROMPT
         input: JSON.pretty_generate(manifest)
       }
@@ -158,6 +171,13 @@ module Holocron
             SECTION_SOURCE_TYPES.fetch(section_type).include?(source.fetch("source_type"))
           end
           errors["sections.#{index}.source_refs"] = "Citations are not relevant to this section type." if irrelevant.any?
+        end
+        section_source_refs = manifest.fetch("section_source_refs", {})
+        if section_source_refs.key?(section_type)
+          out_of_bounds = refs - section_source_refs.fetch(section_type)
+          if out_of_bounds.any?
+            errors["sections.#{index}.source_refs"] = "Citations fall outside this section's retrieval boundary."
+          end
         end
         if section_type == "prior_history"
           current_request_refs = refs.filter_map { |ref| catalog[ref] }.select do |source|

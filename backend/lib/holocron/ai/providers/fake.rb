@@ -71,6 +71,11 @@ module Holocron
           prior_interactions = sources.select do |source|
             source["source_type"] == "interaction" && !source.dig("facts", "current_request")
           end
+          section_source_refs = manifest.fetch("section_source_refs", {})
+          allowed_refs = lambda do |section_type, refs|
+            allowed = section_source_refs[section_type]
+            allowed ? Array(refs).select { |ref| allowed.include?(ref) } : refs
+          end
 
           purpose = request&.dig("facts", "purpose")
           duration = request&.dig("facts", "requested_duration_minutes")
@@ -85,9 +90,15 @@ module Holocron
             role_suffix = roles.empty? ? "" : " (#{roles})"
             "#{facts.fetch('display_name')}#{suffix}#{role_suffix}"
           end
-          history_lines = prior_interactions.map do |interaction|
+          ordered_prior_interactions = if manifest.dig("retrieval", "strategy") == "hybrid"
+            prior_interactions.sort_by { |interaction| interaction.dig("facts", "occurred_at").to_s }
+          else
+            prior_interactions
+          end
+          history_lines = ordered_prior_interactions.map do |interaction|
             facts = interaction.fetch("facts")
-            "#{facts.fetch('occurred_at')[0, 10]} - #{facts.fetch('summary')}"
+            prefix = manifest.dig("retrieval", "strategy") == "hybrid" ? "- " : ""
+            "#{prefix}#{facts.fetch('occurred_at')[0, 10]} - #{facts.fetch('summary')}"
           end
           meeting_facts = meeting&.fetch("facts", {}) || {}
           logistics_lines = []
@@ -102,16 +113,16 @@ module Holocron
           people_refs = people.map { |person| person.fetch("source_ref") }
           interaction_refs = prior_interactions.map { |interaction| interaction.fetch("source_ref") }
           sections = [
-            fake_section("overview", "Meeting overview", overview_lines, request && [request.fetch("source_ref")]),
-            fake_section("attendees", "Attendees", attendee_lines, people_refs + organization_refs),
-            fake_section("prior_history", "Prior history", history_lines, interaction_refs),
+            fake_section("overview", "Meeting overview", overview_lines, allowed_refs.call("overview", request && [request.fetch("source_ref")])),
+            fake_section("attendees", "Attendees", attendee_lines, allowed_refs.call("attendees", people_refs + organization_refs)),
+            fake_section("prior_history", "Prior history", history_lines, allowed_refs.call("prior_history", interaction_refs)),
             fake_section(
               "objectives",
               "Objectives and talking points",
               purpose ? ["Discuss #{purpose}", "Identify decisions, owners, and next steps."] : [],
-              request && [request.fetch("source_ref")]
+              allowed_refs.call("objectives", request && [request.fetch("source_ref")])
             ),
-            fake_section("logistics", "Logistics", logistics_lines, meeting && [meeting.fetch("source_ref")])
+            fake_section("logistics", "Logistics", logistics_lines, allowed_refs.call("logistics", meeting && [meeting.fetch("source_ref")]))
           ]
 
           {

@@ -19,7 +19,13 @@ module Holocron
       @db.extension(:pg_array)
     end
 
-    def search_interactions(query:, exclude_request_id: nil, limit: DEFAULT_LIMIT)
+    def search_interactions(
+      query:,
+      exclude_request_id: nil,
+      limit: DEFAULT_LIMIT,
+      balanced_person_ids: [],
+      per_person_limit: 2
+    )
       refresh = refresh_interactions!
       query_embedding = AI::Embeddings.embed([query], provider: @embedding_provider)
       model = query_embedding.model
@@ -29,7 +35,21 @@ module Holocron
         exception: false
       ) || DEFAULT_MINIMUM_SIMILARITY
 
-      rows = ranked_documents(vector: vector, raw_vector: query_embedding.vectors.first, model: model, limit: limit * 3)
+      global_rows = ranked_documents(
+        vector: vector,
+        raw_vector: query_embedding.vectors.first,
+        model: model,
+        limit: limit * 3
+      )
+      balanced_rows = balanced_ranked_documents(
+        person_ids: balanced_person_ids,
+        exclude_request_id: exclude_request_id,
+        per_person_limit: per_person_limit,
+        vector: vector,
+        raw_vector: query_embedding.vectors.first,
+        model: model
+      )
+      rows = (balanced_rows + global_rows).uniq { |row| row[:source_id] }
 
       interaction_ids = rows.map { |row| row[:source_id] }
       interactions = @db[:interactions]
@@ -54,6 +74,8 @@ module Holocron
           semantic_similarity: row[:similarity].to_f
         )
       end.first(limit)
+      balanced_source_ids = balanced_rows.to_h { |row| [row[:source_id], true] }
+      balanced_selected = selected.select { |interaction| balanced_source_ids[interaction[:id]] }
 
       {
         interactions: selected,
@@ -64,7 +86,9 @@ module Holocron
         embedding_provider: query_embedding.provider,
         embedding_model: model,
         vector_backend: pgvector? ? "pgvector_hnsw" : "postgres_array_local",
-        minimum_similarity: minimum_similarity
+        minimum_similarity: minimum_similarity,
+        attendee_balanced_matches_selected: balanced_selected.length,
+        attendees_with_history_selected: balanced_selected.map { |interaction| interaction[:person_id] }.uniq.length
       }
     end
 
@@ -173,9 +197,38 @@ module Holocron
       "[#{vector.map { |value| format('%.9f', value) }.join(',')}]"
     end
 
-    def ranked_documents(vector:, raw_vector:, model:, limit:)
+    def balanced_ranked_documents(person_ids:, exclude_request_id:, per_person_limit:, vector:, raw_vector:, model:)
+      return [] unless per_person_limit.positive?
+
+      ranked_by_person = Array(person_ids).uniq.filter_map do |person_id|
+        interactions = @db[:interactions]
+          .where(workspace_id: workspace_id, person_id: person_id)
+        if exclude_request_id
+          interactions = interactions.where(
+            Sequel.|({scheduling_request_id: nil}, Sequel.~(scheduling_request_id: exclude_request_id))
+          )
+        end
+        source_ids = interactions.select_map(:id)
+        next if source_ids.empty?
+
+        ranked_documents(
+          vector: vector,
+          raw_vector: raw_vector,
+          model: model,
+          limit: per_person_limit,
+          source_ids: source_ids
+        )
+      end
+
+      Array.new(per_person_limit) do |index|
+        ranked_by_person.filter_map { |rows| rows[index] }
+      end.flatten
+    end
+
+    def ranked_documents(vector:, raw_vector:, model:, limit:, source_ids: nil)
       dataset = @db[:semantic_documents]
         .where(workspace_id: workspace_id, source_type: "interaction", embedding_model: model)
+      dataset = dataset.where(source_id: source_ids) if source_ids
       if pgvector?
         distance = Sequel.lit("embedding <=> ?::vector", vector)
         similarity = Sequel.lit("1.0 - (embedding <=> ?::vector)", vector)

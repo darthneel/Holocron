@@ -107,14 +107,18 @@ export OPENROUTER_API_KEY=...
 See `.env.example` for the non-secret defaults. The local server and live eval
 runner load the ignored `.env.local` file automatically.
 
-Briefings support two retrieval strategies. `linked_recency` follows explicit
+Briefings support three retrieval strategies. `linked_recency` follows explicit
 request-person relationships and recent interaction limits. `semantic` preserves
 the same essential linked facts, then ranks prior interactions inside the current
-workspace by embedding similarity. Neon creates a pgvector HNSW index; local
+workspace by embedding similarity. `hybrid` reserves relevant prior history across
+the meeting attendees, fills the remaining interaction budget with the strongest
+workspace-wide semantic matches, and gives each generated section its own evidence
+boundary. Neon creates a pgvector HNSW index; local
 PostgreSQL installations without pgvector use an array-backed development
 fallback with the same workspace filter and deterministic fake embeddings.
 Generated versions retain retrieval metadata and model usage so reviewers can
-compare useful cited claims per 1,000 input tokens for the same briefing.
+compare useful cited claims per 1,000 input tokens for the same briefing. The UI
+compares the latest generated version from each strategy.
 
 To backfill embeddings for all existing interactions, configure a real embedding
 provider in `.env.local`, apply migrations, and run:

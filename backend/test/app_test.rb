@@ -731,13 +731,13 @@ class HolocronAppTest < Minitest::Test
     refute_nil audit
     payload = JSON.parse(audit.fetch(:payload))
     assert_equal "fake", payload.fetch("provider")
-    assert_equal "grounded-briefing-v1", payload.fetch("prompt_version")
+    assert_equal "grounded-briefing-v2", payload.fetch("prompt_version")
     assert_equal 2, payload.fetch("version_number")
     assert_operator payload.dig("retrieval", "source_count"), :>=, 4
     assert_equal audit_count + 1, Holocron::Database.db[:audit_events].count
   end
 
-  def test_same_briefing_can_compare_linked_and_semantic_generations
+  def test_same_briefing_can_compare_linked_semantic_and_hybrid_generations
     briefing = create_briefing(isolated_request_overrides("retrieval-comparison"))
 
     post_json "/api/briefings/#{briefing.fetch('id')}/generate", {
@@ -752,6 +752,13 @@ class HolocronAppTest < Minitest::Test
       retrieval_strategy: "semantic"
     }, actor_headers
     assert last_response.ok?, last_response.body
+    semantic = parsed_response
+
+    post_json "/api/briefings/#{briefing.fetch('id')}/generate", {
+      expected_lock_version: semantic.fetch("lock_version"),
+      retrieval_strategy: "hybrid"
+    }, actor_headers
+    assert last_response.ok?, last_response.body
     compared = parsed_response
 
     linked_version = compared.fetch("versions").find do |version|
@@ -760,12 +767,22 @@ class HolocronAppTest < Minitest::Test
     semantic_version = compared.fetch("versions").find do |version|
       version.dig("generation", "retrieval_strategy") == "semantic"
     end
+    hybrid_version = compared.fetch("versions").find do |version|
+      version.dig("generation", "retrieval_strategy") == "hybrid"
+    end
     refute_nil linked_version
     refute_nil semantic_version
+    refute_nil hybrid_version
     assert_operator linked_version.dig("generation", "input_tokens"), :>, 0
     assert_operator semantic_version.dig("generation", "input_tokens"), :>, 0
     assert_equal "postgres_array_local", semantic_version.dig("generation", "retrieval", "vector_backend")
     assert_equal "semantic", semantic_version.dig("generation", "retrieval", "strategy")
+    assert_equal "hybrid", hybrid_version.dig("generation", "retrieval", "strategy")
+    assert_equal true, hybrid_version.dig("generation", "retrieval", "attendee_balancing_enabled")
+    assert_operator hybrid_version.dig("generation", "input_tokens"), :>, 0
+    assert_equal "AI-generated draft using attendee-balanced hybrid retrieval.", hybrid_version.fetch("change_summary")
+    hybrid_history = hybrid_version.fetch("sections").find { |section| section.fetch("section_type") == "prior_history" }
+    assert hybrid_history.fetch("body").empty? || hybrid_history.fetch("body").start_with?("- ")
 
     useful_claims = [semantic_version.dig("generation", "cited_claim_count"), 1].min
     post_json "/api/briefings/#{briefing.fetch('id')}/evaluate-generation", {
@@ -778,6 +795,80 @@ class HolocronAppTest < Minitest::Test
     end
     assert_equal useful_claims, evaluated.dig("generation", "useful_cited_claims")
     assert_operator evaluated.dig("generation", "useful_claims_per_1k_input_tokens"), :>=, 0
+  end
+
+  def test_hybrid_retrieval_reserves_relevant_history_across_attendees
+    briefing = create_briefing(
+      requester_name: "Darius Holt",
+      requester_email: "dholt@cedargrovechamber.org",
+      requester_organization: "Cedar Grove Chamber of Commerce",
+      purpose: "Quarterly small-business roundtable on permit turnaround, inspections, and construction notices",
+      participants: [
+        {
+          name: "Rina Patel",
+          email: "rpatel@cedargrovechamber.org",
+          organization: "Cedar Grove Chamber of Commerce",
+          role: "required"
+        },
+        {
+          name: "Sam Rivera",
+          email: "sam.rivera@cedargrove.gov",
+          organization: "Cedar Grove Mayor's Office",
+          role: "staff"
+        }
+      ]
+    )
+    db = Holocron::Database.db
+    stored_briefing = db[:briefings].where(id: briefing.fetch("id")).first
+    workspace = db[:workspaces].where(id: stored_briefing.fetch(:workspace_id)).first
+    actor = db[:workspace_members].where(workspace_id: workspace[:id], email: "neelp22@gmail.com").first
+    request_id = briefing.dig("meeting", "scheduling_request_id")
+    attendee_people = db[:scheduling_request_people]
+      .join(:people, id: :person_id)
+      .where(Sequel[:scheduling_request_people][:scheduling_request_id] => request_id)
+      .select_all(:people)
+      .all
+    attendee_people.each_with_index do |person, index|
+      occurred_at = Time.iso8601("2025-0#{index + 1}-15T12:00:00Z")
+      db[:interactions].insert(
+        id: SecureRandom.uuid,
+        workspace_id: workspace[:id],
+        person_id: person[:id],
+        scheduling_request_id: nil,
+        authored_by_workspace_member_id: actor[:id],
+        interaction_type: "meeting",
+        summary: "#{person[:display_name]} discussed permit turnaround, coordinated inspections, and construction notices.",
+        source_type: "manual",
+        source_id: nil,
+        occurred_at: occurred_at,
+        created_at: occurred_at,
+        updated_at: occurred_at
+      )
+    end
+
+    previous_threshold = ENV["SEMANTIC_MINIMUM_SIMILARITY"]
+    ENV["SEMANTIC_MINIMUM_SIMILARITY"] = "-1"
+    manifest = begin
+      Holocron::BriefingContextAssembler.new(
+        workspace: workspace,
+        strategy: "hybrid"
+      ).call(briefing: stored_briefing)
+    ensure
+      previous_threshold ? ENV["SEMANTIC_MINIMUM_SIMILARITY"] = previous_threshold : ENV.delete("SEMANTIC_MINIMUM_SIMILARITY")
+    end
+    prior_sources = manifest.fetch("sources").select do |source|
+      source.fetch("source_type") == "interaction" && !source.dig("facts", "current_request")
+    end
+    selected_people = prior_sources.map { |source| source.dig("facts", "person_name") }.uniq
+
+    assert_includes selected_people, "Darius Holt"
+    assert_includes selected_people, "Rina Patel"
+    assert_includes selected_people, "Sam Rivera"
+    assert_operator manifest.dig("retrieval", "attendee_balanced_matches_selected"), :>=, 3
+    assert_operator manifest.dig("retrieval", "attendees_with_history_selected"), :>=, 3
+    overview_refs = manifest.dig("section_source_refs", "overview")
+    overview_sources = manifest.fetch("sources").select { |source| overview_refs.include?(source.fetch("source_ref")) }
+    assert_equal %w[meeting scheduling_request], overview_sources.map { |source| source.fetch("source_type") }.sort
   end
 
   def test_semantic_retrieval_never_crosses_workspace_boundary

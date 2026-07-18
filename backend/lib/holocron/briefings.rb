@@ -249,7 +249,7 @@ module Holocron
       expected = expected_lock_version(attributes)
       strategy = optional_text(attributes["retrieval_strategy"], limit: 40) || "linked_recency"
       unless RETRIEVAL_STRATEGIES.include?(strategy)
-        raise ValidationError, {"retrieval_strategy" => "Select linked/recency or semantic retrieval."}
+        raise ValidationError, {"retrieval_strategy" => "Select linked/recency, semantic, or hybrid retrieval."}
       end
       db = Database.db
       briefing = db[:briefings].where(id: id, workspace_id: workspace[:id]).first
@@ -295,9 +295,14 @@ module Holocron
           actor: actor,
           version_number: next_version_number,
           status: "draft",
-          change_summary: strategy == "semantic" ?
-            "AI-generated draft using semantic workspace retrieval." :
-            "AI-generated draft using linked and recent workspace context.",
+          change_summary: case strategy
+          when "semantic"
+            "AI-generated draft using semantic workspace retrieval."
+          when "hybrid"
+            "AI-generated draft using attendee-balanced hybrid retrieval."
+          else
+            "AI-generated draft using linked and recent workspace context."
+          end,
           sections: outcome.sections,
           occurred_at: now,
           generation: generation_metadata(outcome: outcome, manifest: manifest)

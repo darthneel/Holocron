@@ -282,6 +282,8 @@ type BriefingSectionData = {
   sources: BriefingSource[];
 };
 
+type RetrievalStrategy = "linked_recency" | "semantic" | "hybrid";
+
 type BriefingVersion = {
   id: string;
   version_number: number;
@@ -295,7 +297,7 @@ type BriefingVersion = {
     reviewed_at: string;
   } | null;
   generation: {
-    retrieval_strategy: "linked_recency" | "semantic";
+    retrieval_strategy: RetrievalStrategy;
     provider: string;
     model: string;
     prompt_version: string;
@@ -1110,7 +1112,7 @@ export default function Home() {
     return briefingCommand(`/api/briefings/${selectedBriefing.id}/versions`, payload);
   }
 
-  async function generateBriefing(retrievalStrategy: "linked_recency" | "semantic") {
+  async function generateBriefing(retrievalStrategy: RetrievalStrategy) {
     if (!selectedBriefing) return false;
     return briefingCommand(`/api/briefings/${selectedBriefing.id}/generate`, {
       expected_lock_version: selectedBriefing.lock_version,
@@ -1417,7 +1419,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
   canMutate: boolean;
   isSaving: boolean;
   onSelect: (id: string) => Promise<void>;
-  onGenerate: (strategy: "linked_recency" | "semantic") => Promise<boolean>;
+  onGenerate: (strategy: RetrievalStrategy) => Promise<boolean>;
   onEvaluate: (versionNumber: number, usefulCitedClaims: number) => Promise<boolean>;
   onSaveVersion: (payload: Record<string, unknown>) => Promise<boolean>;
   onSubmitReview: () => Promise<boolean>;
@@ -1516,7 +1518,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
     if (await onSubmitReview()) setViewedVersionNumber(null);
   }
 
-  async function generateDraft(strategy: "linked_recency" | "semantic") {
+  async function generateDraft(strategy: RetrievalStrategy) {
     if (await onGenerate(strategy)) {
       setMode("view");
       setViewedVersionNumber(null);
@@ -1663,8 +1665,8 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
 
                   {canMutate && viewingCurrentVersion ? (
                     <div className="briefing-actions">
-                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}><Link2 aria-hidden="true" /><span>{isSaving ? "Generating" : hasGeneratedCurrentVersion ? "Generate linked" : "Generate linked draft"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate semantic"}</span></button><button className="icon-text-button" type="button" onClick={beginRevision} disabled={isSaving}><Save aria-hidden="true" /><span>Edit as new version</span></button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}><Send aria-hidden="true" /><span>{isSaving ? "Submitting" : "Submit for review"}</span></button></> : null}
-                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}><Link2 aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate linked"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate semantic"}</span></button><button className="primary-command" type="button" onClick={beginRevision} disabled={isSaving}><Plus aria-hidden="true" /><span>Create revision</span></button></> : null}
+                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}><Link2 aria-hidden="true" /><span>{isSaving ? "Generating" : hasGeneratedCurrentVersion ? "Generate linked" : "Generate linked draft"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate semantic"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}><UsersRound aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate hybrid"}</span></button><button className="icon-text-button" type="button" onClick={beginRevision} disabled={isSaving}><Save aria-hidden="true" /><span>Edit as new version</span></button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}><Send aria-hidden="true" /><span>{isSaving ? "Submitting" : "Submit for review"}</span></button></> : null}
+                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}><Link2 aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate linked"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate semantic"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}><UsersRound aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate hybrid"}</span></button><button className="primary-command" type="button" onClick={beginRevision} disabled={isSaving}><Plus aria-hidden="true" /><span>Create revision</span></button></> : null}
                       {selectedBriefing.status === "in_review" ? <div className="briefing-review-form"><Field label="Review notes"><textarea rows={2} value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} /></Field><div><button className="icon-text-button" type="button" onClick={() => decide("changes_requested")} disabled={isSaving || !reviewNotes.trim()}><XCircle aria-hidden="true" /><span>Request changes</span></button><button className="primary-command" type="button" onClick={() => decide("approved")} disabled={isSaving}><CheckCircle2 aria-hidden="true" /><span>{isSaving ? "Saving" : "Approve version"}</span></button></div></div> : null}
                     </div>
                   ) : null}
@@ -1683,9 +1685,11 @@ function GenerationComparison({ versions, isSaving, onEvaluate }: {
   isSaving: boolean;
   onEvaluate: (versionNumber: number, usefulCitedClaims: number) => Promise<boolean>;
 }) {
-  const compared = (["linked_recency", "semantic"] as const).map((strategy) => ({
+  const compared = (["linked_recency", "semantic", "hybrid"] as const).map((strategy) => ({
     strategy,
-    version: versions.find((candidate) => candidate.generation?.retrieval_strategy === strategy) ?? null,
+    version: versions
+      .filter((candidate) => candidate.generation?.retrieval_strategy === strategy)
+      .sort((left, right) => right.version_number - left.version_number)[0] ?? null,
   }));
   const [ratings, setRatings] = useState<Record<number, string>>(() => Object.fromEntries(
     compared.filter((item) => item.version).map((item) => [
@@ -1706,7 +1710,7 @@ function GenerationComparison({ versions, isSaving, onEvaluate }: {
       <div className="generation-comparison-grid">
         {compared.map(({strategy, version}) => (
           <article key={strategy} className={version ? "has-generation" : "is-empty"}>
-            <div className="generation-strategy"><span>{strategy === "semantic" ? <Sparkles aria-hidden="true" /> : <Link2 aria-hidden="true" />}{strategy === "semantic" ? "Semantic" : "Linked + recent"}</span>{version ? <small>Version {version.version_number}</small> : null}</div>
+            <div className="generation-strategy"><span>{strategy === "semantic" ? <Sparkles aria-hidden="true" /> : strategy === "hybrid" ? <UsersRound aria-hidden="true" /> : <Link2 aria-hidden="true" />}{strategy === "semantic" ? "Semantic" : strategy === "hybrid" ? "Hybrid balanced" : "Linked + recent"}</span>{version ? <small>Version {version.version_number}</small> : null}</div>
             {!version || !version.generation ? <p>Generate this path to add it to the comparison.</p> : <>
               <div className="generation-metrics">
                 <div><span>Input</span><strong>{version.generation.input_tokens ?? "—"}</strong><small>tokens</small></div>
@@ -1731,21 +1735,24 @@ function RetrievalBoundary({ sources, generation }: { sources: BriefingSource[];
   const people = uniqueSources.filter((source) => source.source_type === "person").length;
   const organizations = uniqueSources.filter((source) => source.source_type === "organization").length;
   const interactions = uniqueSources.filter((source) => source.source_type === "interaction").length;
-  const semantic = generation?.retrieval_strategy === "semantic";
+  const strategy = generation?.retrieval_strategy;
+  const semantic = strategy === "semantic";
+  const hybrid = strategy === "hybrid";
+  const semanticRetrieval = semantic || hybrid;
 
   return (
     <aside className="retrieval-boundary" aria-label="Retrieval boundary">
       <div className="retrieval-boundary-heading">
         <div><p className="eyebrow">Retrieval boundary</p><strong>Why this context is here</strong></div>
-        <span className="retrieval-mode">{semantic ? <Sparkles aria-hidden="true" /> : <Link2 aria-hidden="true" />}{semantic ? "Semantic" : "Exact links"}</span>
+        <span className="retrieval-mode">{semantic ? <Sparkles aria-hidden="true" /> : hybrid ? <UsersRound aria-hidden="true" /> : <Link2 aria-hidden="true" />}{semantic ? "Semantic" : hybrid ? "Hybrid" : "Exact links"}</span>
       </div>
       <div className="retrieval-boundary-grid">
         <div><strong>{people}</strong><span>linked {people === 1 ? "person" : "people"}</span></div>
         <div><strong>{organizations}</strong><span>linked {organizations === 1 ? "organization" : "organizations"}</span></div>
         <div><strong>{interactions}</strong><span>history records</span></div>
       </div>
-      <p>{semantic ? "This version preserves verified request links, then ranks prior interactions by semantic similarity inside the current workspace only." : "This version follows explicit person and organization links, then selects recent interactions. It does not search the workspace for older or unlinked semantic matches."}</p>
-      <div className="retrieval-demo-cue"><Sparkles aria-hidden="true" /><span><strong>{semantic ? "Semantic evidence" : "Control path"}</strong> {semantic ? `${generation?.retrieval.semantic_matches_selected ?? interactions} similarity-ranked interactions were selected at a minimum score of ${generation?.retrieval.minimum_similarity ?? "—"}.` : "Generate a semantic version of this same briefing to compare context size, citations, and model input tokens."}</span></div>
+      <p>{hybrid ? "This version preserves verified request links, reserves semantically relevant history across the attendees, then fills remaining context with the strongest workspace matches. Each section has its own citation boundary." : semantic ? "This version preserves verified request links, then ranks prior interactions by semantic similarity inside the current workspace only." : "This version follows explicit person and organization links, then selects recent interactions. It does not search the workspace for older or unlinked semantic matches."}</p>
+      <div className="retrieval-demo-cue">{hybrid ? <UsersRound aria-hidden="true" /> : <Sparkles aria-hidden="true" />}<span><strong>{hybrid ? "Balanced evidence" : semantic ? "Semantic evidence" : "Control path"}</strong> {semanticRetrieval ? `${generation?.retrieval.semantic_matches_selected ?? interactions} similarity-ranked interactions were selected${hybrid ? ` across ${generation?.retrieval.attendees_with_history_selected ?? "—"} attendees` : ""} at a minimum score of ${generation?.retrieval.minimum_similarity ?? "—"}.` : "Generate a semantic or hybrid version of this same briefing to compare context size, citations, and model input tokens."}</span></div>
     </aside>
   );
 }

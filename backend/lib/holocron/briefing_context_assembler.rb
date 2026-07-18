@@ -7,8 +7,8 @@ require_relative "semantic_index"
 
 module Holocron
   class BriefingContextAssembler
-    CONTEXT_VERSION = "briefing-context-v2"
-    RETRIEVAL_STRATEGIES = %w[linked_recency semantic].freeze
+    CONTEXT_VERSION = "briefing-context-v3"
+    RETRIEVAL_STRATEGIES = %w[linked_recency semantic hybrid].freeze
     MAX_PEOPLE = 12
     MAX_CURRENT_INTERACTIONS_PER_PERSON = 2
     MAX_PRIOR_INTERACTIONS_PER_PERSON = 5
@@ -38,8 +38,13 @@ module Holocron
 
       people, omitted_people = request_people(request[:id])
       organizations = request_organizations(people)
-      interactions, omitted_interactions, strategy_metadata = if @strategy == "semantic"
-        semantic_interactions(request: request, meeting: meeting, people: people)
+      interactions, omitted_interactions, strategy_metadata = if semantic_strategy?
+        semantic_interactions(
+          request: request,
+          meeting: meeting,
+          people: people,
+          attendee_balanced: @strategy == "hybrid"
+        )
       else
         selected, omitted = request_interactions(request[:id], people)
         [selected, omitted, {}]
@@ -77,11 +82,11 @@ module Holocron
       limitations = []
       limitations << "#{omitted_people} linked people were omitted by the context limit." if omitted_people.positive?
       if omitted_interactions.positive?
-        reason = @strategy == "semantic" ? "context limits" : "recency or context limits"
+        reason = semantic_strategy? ? "context limits" : "recency or context limits"
         limitations << "#{omitted_interactions} interactions were omitted by #{reason}."
       end
       if prior_interactions.zero?
-        limitation = @strategy == "semantic" ?
+        limitation = semantic_strategy? ?
           "No semantically relevant prior interaction history was found in this workspace." :
           "No prior interaction history was available for the linked people."
         limitations << limitation
@@ -104,6 +109,7 @@ module Holocron
           "source_count" => sources.length
         }.merge(strategy_metadata)
       }
+      manifest["section_source_refs"] = hybrid_section_source_refs(sources) if @strategy == "hybrid"
       manifest["retrieval"]["context_characters"] = JSON.generate(manifest).length
       manifest
     end
@@ -183,7 +189,7 @@ module Holocron
       [selected, omitted]
     end
 
-    def semantic_interactions(request:, meeting:, people:)
+    def semantic_interactions(request:, meeting:, people:, attendee_balanced: false)
       current = current_request_interactions(request[:id], people)
       result = SemanticIndex.new(
         workspace: @workspace,
@@ -191,7 +197,9 @@ module Holocron
       ).search_interactions(
         query: semantic_query(request, meeting),
         exclude_request_id: request[:id],
-        limit: MAX_INTERACTIONS - current.length
+        limit: MAX_INTERACTIONS - current.length,
+        balanced_person_ids: attendee_balanced ? people.map { |person| person[:id] } : [],
+        per_person_limit: 2
       )
       selected = (current + result.fetch(:interactions)).uniq { |interaction| interaction[:id] }.first(MAX_INTERACTIONS)
       metadata = {
@@ -203,7 +211,10 @@ module Holocron
         "embedding_indexing_tokens" => result[:indexing_tokens],
         "embedding_query_tokens" => result[:query_tokens],
         "minimum_similarity" => result[:minimum_similarity],
-        "semantic_matches_selected" => result.fetch(:interactions).length
+        "semantic_matches_selected" => result.fetch(:interactions).length,
+        "attendee_balancing_enabled" => attendee_balanced,
+        "attendee_balanced_matches_selected" => result[:attendee_balanced_matches_selected],
+        "attendees_with_history_selected" => result[:attendees_with_history_selected]
       }
       [selected, 0, metadata]
     end
@@ -228,6 +239,29 @@ module Holocron
         request[:availability_notes],
         request[:original_request_text]
       ].compact.join("\n")
+    end
+
+    def semantic_strategy?
+      %w[semantic hybrid].include?(@strategy)
+    end
+
+    def hybrid_section_source_refs(sources)
+      refs_for = lambda do |&block|
+        sources.select(&block).map { |source| source.fetch("source_ref") }
+      end
+      prior_interaction = lambda do |source|
+        source["source_type"] == "interaction" && !source.dig("facts", "current_request")
+      end
+
+      {
+        "overview" => refs_for.call { |source| %w[scheduling_request meeting].include?(source["source_type"]) },
+        "attendees" => refs_for.call { |source| %w[scheduling_request person organization].include?(source["source_type"]) },
+        "prior_history" => refs_for.call(&prior_interaction),
+        "objectives" => refs_for.call do |source|
+          source["source_type"] == "scheduling_request" || prior_interaction.call(source)
+        end,
+        "logistics" => refs_for.call { |source| %w[meeting scheduling_request].include?(source["source_type"]) }
+      }
     end
 
     def request_source(request, candidate_windows)
