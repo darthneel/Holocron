@@ -41,6 +41,27 @@ class HolocronAppTest < Minitest::Test
     assert_equal "ok", parsed_response.fetch("status")
   end
 
+  def test_database_pool_replaces_a_connection_closed_while_idle
+    db = Holocron::Database.db
+    original_timeout = db.pool.connection_validation_timeout
+    db.pool.connection_validation_timeout = 0
+
+    db.synchronize do |connection|
+      connection.finish
+    end
+
+    assert_equal 1, db.get(Sequel.lit("1"))
+  ensure
+    db.pool.connection_validation_timeout = original_timeout if db && original_timeout
+  end
+
+  def test_database_enables_safe_transaction_connection_retries
+    assert_includes(
+      Holocron::Database.db.singleton_class.ancestors,
+      Sequel::TransactionConnectionValidator
+    )
+  end
+
   def test_fake_session_rejects_invalid_email
     post_json "/api/fake-session", email: "not-an-email"
 
