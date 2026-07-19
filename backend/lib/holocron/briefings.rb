@@ -11,7 +11,10 @@ require_relative "relationships"
 module Holocron
   module Briefings
     STATUSES = %w[draft in_review approved changes_requested].freeze
-    SECTION_TYPES = %w[overview attendees relationship_context prior_history objectives logistics notes].freeze
+    SECTION_TYPES = %w[
+      overview attendees relationship_context prior_history objectives logistics notes
+      meeting_snapshot meeting_ask desired_outcomes decision_context talking_points risks open_questions
+    ].freeze
     SOURCE_TYPES = %w[scheduling_request meeting person organization interaction].freeze
     RETRIEVAL_STRATEGIES = BriefingContextAssembler::RETRIEVAL_STRATEGIES
 
@@ -499,7 +502,7 @@ module Holocron
         sources = normalize_sources(section["sources"], index: index, workspace: workspace, errors: errors)
         next unless SECTION_TYPES.include?(section_type) && title
 
-        {section_type: section_type, title: title, body: body, sources: sources}
+        {section_type: section_type, title: title, body: body, items: [], sources: sources}
       end.compact
 
       raise ValidationError, errors unless errors.empty?
@@ -694,6 +697,7 @@ module Holocron
           body: section[:body],
           position: position,
           sources_json: JSON.generate(section[:sources]),
+          items_json: JSON.generate(section[:items] || []),
           created_at: occurred_at
         )
       end
@@ -775,6 +779,10 @@ module Holocron
 
     def count_cited_claims(sections)
       sections.sum do |section|
+        items = section[:items] || []
+        if items.any?
+          next items.count { |item| Array(item[:sources]).any? }
+        end
         next 0 if section[:sources].nil? || section[:sources].empty?
 
         section[:body].to_s.lines.sum do |line|
@@ -910,8 +918,29 @@ module Holocron
         title: section[:title],
         body: section[:body],
         position: section[:position],
+        items: parse_items(section[:items_json]),
         sources: parse_sources(section[:sources_json])
       }
+    end
+
+    def parse_items(value)
+      JSON.parse(value || "[]").filter_map do |item|
+        next unless item.is_a?(Hash) && item["text"].is_a?(String)
+
+        {
+          label: item["label"].to_s,
+          text: item["text"],
+          sources: Array(item["sources"]).filter_map do |source|
+            next unless source.is_a?(Hash)
+            {
+              source_type: source["source_type"], source_id: source["source_id"],
+              source_label: source["source_label"], source_excerpt: source["source_excerpt"]
+            }
+          end
+        }
+      end
+    rescue JSON::ParserError
+      []
     end
 
     def parse_sources(value)

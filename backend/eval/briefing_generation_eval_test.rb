@@ -44,9 +44,11 @@ module BriefingGenerationEval
       failures << "generated body includes forbidden term #{term.inspect}" if combined_body.include?(term.downcase)
     end
     outcome.sections.each do |section|
-      next if section[:section_type] == "notes" || section[:body].empty?
+      next if %w[notes open_questions].include?(section[:section_type])
 
-      failures << "#{section[:section_type]} has material content without sources" if section[:sources].empty?
+      Array(section[:items]).each do |item|
+        failures << "#{section[:section_type]} has an item without sources" if item[:sources].empty?
+      end
     end
     failures
   end
@@ -75,7 +77,7 @@ module BriefingGenerationEval
     FileUtils.mkdir_p(directory)
     path = File.join(directory, "briefing-generation-#{Time.now.utc.strftime('%Y%m%dT%H%M%SZ')}.json")
     File.write(path, JSON.pretty_generate(
-      suite: "grounded-briefing-v1",
+      suite: "action-briefing-v3",
       prompt_version: Holocron::BriefingGeneration::PROMPT_VERSION,
       provider: ENV["AI_BRIEFING_GENERATION_PROVIDER"],
       configured_model: ENV["AI_BRIEFING_GENERATION_MODEL"],

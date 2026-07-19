@@ -8,13 +8,16 @@ module Holocron
   module AI
     module Providers
       class Responses
-        attr_reader :name, :model
+        DEFAULT_READ_TIMEOUT = 60
 
-        def initialize(name:, endpoint:, api_key:, model:, extra_headers: {}, transport: nil)
+        attr_reader :name, :model, :read_timeout
+
+        def initialize(name:, endpoint:, api_key:, model:, extra_headers: {}, transport: nil, read_timeout: DEFAULT_READ_TIMEOUT)
           @name = name
           @endpoint = URI(endpoint)
           @api_key = api_key.to_s
           @model = model
+          @read_timeout = read_timeout
           @extra_headers = extra_headers
           @transport = transport || method(:perform_request)
         end
@@ -94,7 +97,7 @@ module Holocron
             uri.port,
             use_ssl: uri.scheme == "https",
             open_timeout: 10,
-            read_timeout: 60
+            read_timeout: read_timeout
           ) { |http| http.request(request) }
           {status: response.code.to_i, body: response.body}
         rescue Net::OpenTimeout, Net::ReadTimeout, IOError, SocketError => error

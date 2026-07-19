@@ -91,8 +91,10 @@ function briefingTalkingPoints(body: string) {
 }
 
 function emptyBriefingSectionText(sectionType: string) {
-  if (sectionType === "prior_history") return "No prior interactions recorded.";
-  if (sectionType === "objectives") return "No suggested talking points generated.";
+  if (["prior_history", "decision_context"].includes(sectionType)) return "No decision-relevant prior context found.";
+  if (["objectives", "talking_points"].includes(sectionType)) return "No suggested talking points generated.";
+  if (sectionType === "risks") return "No evidence-supported risks identified.";
+  if (sectionType === "open_questions") return "No open questions identified.";
   return "Not yet drafted.";
 }
 
@@ -279,6 +281,11 @@ type BriefingSectionData = {
   title: string;
   body: string;
   position: number;
+  items: Array<{
+    label: string;
+    text: string;
+    sources: BriefingSource[];
+  }>;
   sources: BriefingSource[];
 };
 
@@ -447,6 +454,13 @@ const briefingSectionLabels: Record<string, string> = {
   prior_history: "Prior history",
   objectives: "Objectives",
   logistics: "Logistics",
+  meeting_snapshot: "Meeting snapshot",
+  meeting_ask: "Why this meeting",
+  desired_outcomes: "Desired outcomes",
+  decision_context: "Decision context",
+  talking_points: "Talking points",
+  risks: "Risks & sensitivities",
+  open_questions: "Open questions",
   notes: "Notes",
 };
 
@@ -1637,14 +1651,36 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                     )).map((section) => (
                       <section className="briefing-content-section" key={section.id}>
                         <div><span>{briefingSectionLabels[section.section_type]}</span><h4>{section.title}</h4></div>
-                        {section.body ? (
+                        {section.items.length > 0 ? (
+                          <ul className="briefing-structured-items">
+                            {section.items.map((item, itemIndex) => {
+                              const itemKey = `${section.id}-item-${itemIndex}`;
+                              return <li key={itemKey}>
+                                <p>{item.label ? <strong>{item.label}</strong> : null}{item.text}</p>
+                                {item.sources.length > 0 ? <div className="briefing-source-disclosure">
+                                  <button
+                                    className="briefing-sources-toggle"
+                                    type="button"
+                                    aria-expanded={Boolean(expandedSources[itemKey])}
+                                    aria-controls={`briefing-sources-${itemKey}`}
+                                    onClick={() => setExpandedSources((current) => ({...current, [itemKey]: !current[itemKey]}))}
+                                  >
+                                    <Link2 aria-hidden="true" />
+                                    <span>{item.sources.length} {item.sources.length === 1 ? "source" : "sources"}</span>
+                                  </button>
+                                  {expandedSources[itemKey] ? <div id={`briefing-sources-${itemKey}`} className="briefing-sources">{item.sources.map((source) => <div key={`${source.source_type}-${source.source_id}`}><Link2 aria-hidden="true" /><span><strong>{source.source_label}</strong><small>{formatRelationshipType(source.source_type)}{source.source_excerpt ? ` · ${source.source_excerpt}` : ""}</small></span></div>)}</div> : null}
+                                </div> : null}
+                              </li>;
+                            })}
+                          </ul>
+                        ) : section.body ? (
                           section.section_type === "objectives" ? (
                             <ul className="briefing-talking-points">
                               {briefingTalkingPoints(section.body).map((point, index) => <li key={`${section.id}-point-${index}`}>{point}</li>)}
                             </ul>
                           ) : <p>{section.body}</p>
                         ) : <p className="muted-value">{emptyBriefingSectionText(section.section_type)}</p>}
-                        {section.sources.length > 0 ? <div className="briefing-source-disclosure">
+                        {section.items.length === 0 && section.sources.length > 0 ? <div className="briefing-source-disclosure">
                           <button
                             className="briefing-sources-toggle"
                             type="button"

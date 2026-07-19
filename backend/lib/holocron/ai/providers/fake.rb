@@ -65,64 +65,48 @@ module Holocron
           manifest = JSON.parse(input)
           sources = manifest.fetch("sources")
           request = sources.find { |source| source["source_type"] == "scheduling_request" }
-          meeting = sources.find { |source| source["source_type"] == "meeting" }
-          people = sources.select { |source| source["source_type"] == "person" }
-          organizations = sources.select { |source| source["source_type"] == "organization" }
           prior_interactions = sources.select do |source|
             source["source_type"] == "interaction" && !source.dig("facts", "current_request")
           end
           section_source_refs = manifest.fetch("section_source_refs", {})
-          allowed_refs = lambda do |section_type, refs|
-            allowed = section_source_refs[section_type]
-            allowed ? Array(refs).select { |ref| allowed.include?(ref) } : refs
+          allowed_refs = lambda do |section_type, sources_to_cite|
+            allowed = section_source_refs.fetch(section_type, [])
+            Array(sources_to_cite).filter_map { |source| source && source["source_ref"] }
+              .select { |ref| allowed.include?(ref) }.uniq.first(3)
           end
 
           purpose = request&.dig("facts", "purpose")
-          duration = request&.dig("facts", "requested_duration_minutes")
-          overview_lines = []
-          overview_lines << purpose if purpose
-          overview_lines << "Requested duration: #{duration} minutes." if duration
-          attendee_lines = people.map do |person|
-            facts = person.fetch("facts")
-            context = [facts["job_title"], facts["organization_name"]].compact.join(", ")
-            roles = facts.fetch("request_roles", []).map { |role| humanize(role) }.join(" / ")
-            suffix = context.empty? ? "" : " - #{context}"
-            role_suffix = roles.empty? ? "" : " (#{roles})"
-            "#{facts.fetch('display_name')}#{suffix}#{role_suffix}"
+          request_refs = allowed_refs.call("meeting_ask", [request])
+          action_evidence = prior_interactions.first(3)
+          context_items = prior_interactions.first(4).map do |interaction|
+            fake_item(
+              interaction.dig("facts", "person_name").to_s,
+              interaction.dig("facts", "summary"),
+              allowed_refs.call("decision_context", [interaction])
+            )
           end
-          ordered_prior_interactions = if manifest.dig("retrieval", "strategy") == "hybrid"
-            prior_interactions.sort_by { |interaction| interaction.dig("facts", "occurred_at").to_s }
-          else
-            prior_interactions
+          risk_evidence = prior_interactions.find do |interaction|
+            interaction.dig("facts", "summary").to_s.match?(/risk|constraint|concern|delay|requires|blocked|shortage|gap/i)
           end
-          history_lines = ordered_prior_interactions.map do |interaction|
-            facts = interaction.fetch("facts")
-            prefix = manifest.dig("retrieval", "strategy") == "hybrid" ? "- " : ""
-            "#{prefix}#{facts.fetch('occurred_at')[0, 10]} - #{facts.fetch('summary')}"
-          end
-          meeting_facts = meeting&.fetch("facts", {}) || {}
-          logistics_lines = []
-          logistics_lines << "Starts: #{meeting_facts['starts_at']}" if meeting_facts["starts_at"]
-          logistics_lines << "Ends: #{meeting_facts['ends_at']}" if meeting_facts["ends_at"]
-          logistics_lines << "Location: #{meeting_facts['location'] || 'Not specified'}" if meeting
-
-          organization_refs = organizations.filter_map do |organization|
-            person_organization_ids = people.filter_map { |person| person.dig("facts", "organization_id") }
-            organization["source_ref"] if person_organization_ids.include?(organization["source_id"])
-          end
-          people_refs = people.map { |person| person.fetch("source_ref") }
-          interaction_refs = prior_interactions.map { |interaction| interaction.fetch("source_ref") }
           sections = [
-            fake_section("overview", "Meeting overview", overview_lines, allowed_refs.call("overview", request && [request.fetch("source_ref")])),
-            fake_section("attendees", "Attendees", attendee_lines, allowed_refs.call("attendees", people_refs + organization_refs)),
-            fake_section("prior_history", "Prior history", history_lines, allowed_refs.call("prior_history", interaction_refs)),
-            fake_section(
-              "objectives",
-              "Objectives and talking points",
-              purpose ? ["Discuss #{purpose}", "Identify decisions, owners, and next steps."] : [],
-              allowed_refs.call("objectives", request && [request.fetch("source_ref")])
-            ),
-            fake_section("logistics", "Logistics", logistics_lines, allowed_refs.call("logistics", meeting && [meeting.fetch("source_ref")]))
+            fake_section("meeting_ask", "Why this meeting", [
+              fake_item("The ask", purpose || "Clarify the purpose of the meeting.", request_refs)
+            ]),
+            fake_section("desired_outcomes", "Desired outcomes", [
+              fake_item("Decision", "Reach a clear decision about #{purpose}.", allowed_refs.call("desired_outcomes", [request] + action_evidence)),
+              fake_item("Next steps", "Assign owners and dates for agreed next steps.", allowed_refs.call("desired_outcomes", [request] + action_evidence))
+            ]),
+            fake_section("decision_context", "Decision-relevant context", context_items),
+            fake_section("talking_points", "Recommended talking points", [
+              fake_item("Open", "Confirm the most important outcome for #{purpose}.", allowed_refs.call("talking_points", [request] + action_evidence)),
+              fake_item("Close", "Summarize decisions, owners, and deadlines before ending.", allowed_refs.call("talking_points", [request] + action_evidence))
+            ]),
+            fake_section("risks", "Risks and sensitivities", risk_evidence ? [
+              fake_item("Constraint", risk_evidence.dig("facts", "summary"), allowed_refs.call("risks", [risk_evidence]))
+            ] : []),
+            fake_section("open_questions", "Open questions", [
+              fake_item("Ownership", "Who will own each follow-up after the meeting?", [])
+            ])
           ]
 
           {
@@ -130,17 +114,20 @@ module Holocron
             model: model,
             provider_request_id: "fake-#{@calls}",
             input_tokens: input.split.length,
-            output_tokens: sections.sum { |section| section.fetch("body").split.length }
+            output_tokens: sections.sum { |section| section.fetch("items").sum { |item| item.fetch("text").split.length } }
           }
         end
 
-        def fake_section(type, title, lines, refs)
+        def fake_section(type, title, items)
           {
             "section_type" => type,
             "title" => title,
-            "body" => Array(lines).compact.join("\n"),
-            "source_refs" => Array(refs).compact.uniq.first(25)
+            "items" => items
           }
+        end
+
+        def fake_item(label, text, refs)
+          {"label" => label, "text" => text.to_s, "source_refs" => Array(refs).compact.uniq.first(3)}
         end
 
         def parse_headers(input)

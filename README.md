@@ -107,6 +107,20 @@ export OPENROUTER_API_KEY=...
 See `.env.example` for the non-secret defaults. The local server and live eval
 runner load the ignored `.env.local` file automatically.
 
+For one local briefing-generation run with Kimi K3, start the API with:
+
+```sh
+cd backend
+bin/server --briefing-model kimi-k3
+```
+
+This uses the existing Vercel AI Gateway credential and `moonshotai/kimi-k3` for
+briefing generation only. It allows Kimi up to 180 seconds and makes one provider
+attempt per click, so a slow response does not trigger a duplicate billed request.
+It does not change `.env.local`, request extraction, or semantic embeddings. Stop
+the server after the test and start it normally to return to the configured briefing
+model.
+
 Briefings support three retrieval strategies. `linked_recency` follows explicit
 request-person relationships and recent interaction limits. `semantic` preserves
 the same essential linked facts, then ranks prior interactions inside the current

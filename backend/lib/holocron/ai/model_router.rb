@@ -46,6 +46,7 @@ module Holocron
       def request(prompt:, schema:, schema_name:, reasoning_effort:)
         started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         attempts = 0
+        max_attempts = configured_max_attempts
 
         begin
           attempts += 1
@@ -67,7 +68,7 @@ module Holocron
             duration_ms: elapsed_ms(started_at)
           )
         rescue TransientError => error
-          retry if attempts < MAX_ATTEMPTS
+          retry if attempts < max_attempts
           failure_result("failed", error, attempts, started_at)
         rescue RefusalError => error
           failure_result("refused", error, attempts, started_at)
@@ -87,14 +88,16 @@ module Holocron
             name: "openai",
             endpoint: "https://api.openai.com/v1/responses",
             api_key: ENV["OPENAI_API_KEY"],
-            model: model
+            model: model,
+            read_timeout: configured_read_timeout
           )
         when "vercel"
           Providers::Responses.new(
             name: "vercel",
             endpoint: "https://ai-gateway.vercel.sh/v1/responses",
             api_key: ENV["AI_GATEWAY_API_KEY"],
-            model: model
+            model: model,
+            read_timeout: configured_read_timeout
           )
         when "openrouter"
           Providers::Responses.new(
@@ -102,7 +105,8 @@ module Holocron
             endpoint: "https://openrouter.ai/api/v1/responses",
             api_key: ENV["OPENROUTER_API_KEY"],
             model: model,
-            extra_headers: {"X-Title" => "Holocron"}
+            extra_headers: {"X-Title" => "Holocron"},
+            read_timeout: configured_read_timeout
           )
         else
           raise ConfigurationError, "Unsupported #{task_label} provider: #{provider_name}."
@@ -115,6 +119,27 @@ module Holocron
 
       def model_environment_key
         @task == :briefing_generation ? "AI_BRIEFING_GENERATION_MODEL" : "AI_REQUEST_EXTRACTION_MODEL"
+      end
+
+      def read_timeout_environment_key
+        @task == :briefing_generation ? "AI_BRIEFING_GENERATION_READ_TIMEOUT" : "AI_REQUEST_EXTRACTION_READ_TIMEOUT"
+      end
+
+      def max_attempts_environment_key
+        @task == :briefing_generation ? "AI_BRIEFING_GENERATION_MAX_ATTEMPTS" : "AI_REQUEST_EXTRACTION_MAX_ATTEMPTS"
+      end
+
+      def configured_read_timeout
+        configured_positive_integer(read_timeout_environment_key, Providers::Responses::DEFAULT_READ_TIMEOUT)
+      end
+
+      def configured_max_attempts
+        configured_positive_integer(max_attempts_environment_key, MAX_ATTEMPTS)
+      end
+
+      def configured_positive_integer(key, default)
+        value = Integer(ENV.fetch(key, default.to_s), exception: false)
+        value && value.positive? ? value : default
       end
 
       def default_model(provider_name)

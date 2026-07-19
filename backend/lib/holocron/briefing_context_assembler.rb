@@ -7,7 +7,7 @@ require_relative "semantic_index"
 
 module Holocron
   class BriefingContextAssembler
-    CONTEXT_VERSION = "briefing-context-v3"
+    CONTEXT_VERSION = "briefing-context-v4"
     RETRIEVAL_STRATEGIES = %w[linked_recency semantic hybrid].freeze
     MAX_PEOPLE = 12
     MAX_CURRENT_INTERACTIONS_PER_PERSON = 2
@@ -109,7 +109,9 @@ module Holocron
           "source_count" => sources.length
         }.merge(strategy_metadata)
       }
-      manifest["section_source_refs"] = hybrid_section_source_refs(sources) if @strategy == "hybrid"
+      manifest["section_source_refs"] = section_source_refs(sources)
+      manifest["retrieval"]["section_evidence_counts"] = manifest["section_source_refs"]
+        .transform_values(&:length)
       manifest["retrieval"]["context_characters"] = JSON.generate(manifest).length
       manifest
     end
@@ -199,7 +201,8 @@ module Holocron
         exclude_request_id: request[:id],
         limit: MAX_INTERACTIONS - current.length,
         balanced_person_ids: attendee_balanced ? people.map { |person| person[:id] } : [],
-        per_person_limit: 2
+        per_person_limit: 2,
+        max_per_person: attendee_balanced ? 3 : nil
       )
       selected = (current + result.fetch(:interactions)).uniq { |interaction| interaction[:id] }.first(MAX_INTERACTIONS)
       metadata = {
@@ -213,6 +216,7 @@ module Holocron
         "minimum_similarity" => result[:minimum_similarity],
         "semantic_matches_selected" => result.fetch(:interactions).length,
         "attendee_balancing_enabled" => attendee_balanced,
+        "maximum_matches_per_person" => attendee_balanced ? 3 : nil,
         "attendee_balanced_matches_selected" => result[:attendee_balanced_matches_selected],
         "attendees_with_history_selected" => result[:attendees_with_history_selected]
       }
@@ -245,7 +249,7 @@ module Holocron
       %w[semantic hybrid].include?(@strategy)
     end
 
-    def hybrid_section_source_refs(sources)
+    def section_source_refs(sources)
       refs_for = lambda do |&block|
         sources.select(&block).map { |source| source.fetch("source_ref") }
       end
@@ -253,15 +257,32 @@ module Holocron
         source["source_type"] == "interaction" && !source.dig("facts", "current_request")
       end
 
+      request_refs = refs_for.call { |source| source["source_type"] == "scheduling_request" }
+      current_refs = refs_for.call do |source|
+        source["source_type"] == "interaction" && source.dig("facts", "current_request")
+      end
+      prior_sources = sources.select(&prior_interaction)
+      action_sources = prioritize_interactions(prior_sources, /decision|commit|owner|next step|follow.?up|agreed|asked|requested|recommend|plan|threshold/i)
+      risk_sources = prioritize_interactions(prior_sources, /risk|constraint|concern|blocked|requires|without|only if|delay|shortage|unconfirmed|gap|barrier|capacity|security|accessib/i)
+      identity_refs = refs_for.call { |source| %w[person organization].include?(source["source_type"]) }
+
       {
-        "overview" => refs_for.call { |source| %w[scheduling_request meeting].include?(source["source_type"]) },
-        "attendees" => refs_for.call { |source| %w[scheduling_request person organization].include?(source["source_type"]) },
-        "prior_history" => refs_for.call(&prior_interaction),
-        "objectives" => refs_for.call do |source|
-          source["source_type"] == "scheduling_request" || prior_interaction.call(source)
-        end,
-        "logistics" => refs_for.call { |source| %w[meeting scheduling_request].include?(source["source_type"]) }
+        "meeting_ask" => (request_refs + current_refs).first(4),
+        "desired_outcomes" => (request_refs + action_sources.map { |source| source.fetch("source_ref") }).uniq.first(7),
+        "decision_context" => (
+          prior_sources.first(8).map { |source| source.fetch("source_ref") } + identity_refs.first(2)
+        ).uniq,
+        "talking_points" => (request_refs + action_sources.map { |source| source.fetch("source_ref") }).uniq.first(7),
+        "risks" => (request_refs + risk_sources.map { |source| source.fetch("source_ref") }).uniq.first(7),
+        "open_questions" => (request_refs + risk_sources.map { |source| source.fetch("source_ref") }).uniq.first(5)
       }
+    end
+
+    def prioritize_interactions(sources, pattern)
+      matching, remaining = sources.partition do |source|
+        [source.dig("facts", "summary"), source["source_excerpt"]].compact.join(" ").match?(pattern)
+      end
+      matching + remaining
     end
 
     def request_source(request, candidate_windows)

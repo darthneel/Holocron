@@ -93,12 +93,12 @@
     },
     "assertions": {
       "section_includes": {
-        "overview": ["Riverline"],
-        "prior_history": ["permit"]
+        "meeting_ask": ["Riverline"],
+        "decision_context": ["permit"]
       },
       "section_source_types": {
-        "prior_history": ["interaction"],
-        "logistics": ["meeting"]
+        "decision_context": ["interaction"],
+        "meeting_snapshot": ["meeting"]
       },
       "forbidden_terms": ["married", "political donor", "competitor"]
     }
@@ -171,7 +171,7 @@
     },
     "assertions": {
       "section_includes": {
-        "overview": ["tree"]
+        "meeting_ask": ["tree"]
       },
       "limitation_includes": ["No prior interaction history"],
       "forbidden_terms": ["previously met", "longstanding relationship", "supports the proposal"]
@@ -245,7 +245,7 @@
     },
     "assertions": {
       "section_includes": {
-        "overview": ["library"]
+        "meeting_ask": ["library"]
       },
       "forbidden_terms": ["secret donor", "attacker@example.com"]
     }

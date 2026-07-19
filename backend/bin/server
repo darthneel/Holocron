@@ -9,6 +9,25 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
+if [ "${1:-}" = "--briefing-model" ]; then
+  case "${2:-}" in
+    kimi-k3)
+      export AI_BRIEFING_GENERATION_PROVIDER=vercel
+      export AI_BRIEFING_GENERATION_MODEL=moonshotai/kimi-k3
+      export AI_BRIEFING_GENERATION_READ_TIMEOUT=180
+      export AI_BRIEFING_GENERATION_MAX_ATTEMPTS=1
+      shift 2
+      ;;
+    *)
+      echo "Usage: bin/server --briefing-model kimi-k3" >&2
+      exit 64
+      ;;
+  esac
+elif [ "${1:-}" = "--help" ]; then
+  echo "Usage: bin/server [--briefing-model kimi-k3]" >&2
+  exit 0
+fi
+
 if [ -x /opt/homebrew/opt/ruby/bin/ruby ]; then
   DEFAULT_RUBY_BIN=/opt/homebrew/opt/ruby/bin/ruby
 else

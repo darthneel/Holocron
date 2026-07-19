@@ -24,7 +24,8 @@ module Holocron
       exclude_request_id: nil,
       limit: DEFAULT_LIMIT,
       balanced_person_ids: [],
-      per_person_limit: 2
+      per_person_limit: 2,
+      max_per_person: nil
     )
       refresh = refresh_interactions!
       query_embedding = AI::Embeddings.embed([query], provider: @embedding_provider)
@@ -61,6 +62,7 @@ module Holocron
         .all
         .to_h { |person| [person[:id], person] }
 
+      per_person_counts = Hash.new(0)
       selected = rows.filter_map do |row|
         interaction = interactions[row[:source_id]]
         next unless interaction
@@ -68,6 +70,9 @@ module Holocron
         next if row[:similarity].to_f < minimum_similarity
 
         person = people[interaction[:person_id]]
+        next if max_per_person && per_person_counts[interaction[:person_id]] >= max_per_person
+
+        per_person_counts[interaction[:person_id]] += 1
         interaction.merge(
           person_name: person&.fetch(:display_name, "Unknown person"),
           current_request: false,

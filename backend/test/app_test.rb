@@ -363,6 +363,45 @@ class HolocronAppTest < Minitest::Test
     assert_equal({"ok" => true}, result.output)
   end
 
+  def test_briefing_router_supports_a_scoped_timeout_and_single_attempt
+    keys = %w[
+      AI_BRIEFING_GENERATION_PROVIDER
+      AI_BRIEFING_GENERATION_MODEL
+      AI_BRIEFING_GENERATION_READ_TIMEOUT
+      AI_BRIEFING_GENERATION_MAX_ATTEMPTS
+      AI_GATEWAY_API_KEY
+    ]
+    original = keys.to_h { |key| [key, ENV[key]] }
+    ENV["AI_BRIEFING_GENERATION_PROVIDER"] = "vercel"
+    ENV["AI_BRIEFING_GENERATION_MODEL"] = "moonshotai/kimi-k3"
+    ENV["AI_BRIEFING_GENERATION_READ_TIMEOUT"] = "180"
+    ENV["AI_BRIEFING_GENERATION_MAX_ATTEMPTS"] = "1"
+    ENV["AI_GATEWAY_API_KEY"] = "test-key"
+
+    configured_router = Holocron::AI::ModelRouter.new(task: :briefing_generation)
+    configured_provider = configured_router.instance_variable_get(:@provider)
+    assert_equal 180, configured_provider.read_timeout
+    assert_equal "moonshotai/kimi-k3", configured_provider.model
+
+    transient_provider = Struct.new(:name, :model) do
+      def generate(**)
+        raise Holocron::AI::TransientError, "slow provider"
+      end
+    end.new("test", "kimi-test")
+    router = Holocron::AI::ModelRouter.new(provider: transient_provider, task: :briefing_generation)
+    result = router.briefing_generation(
+      prompt: {instructions: "Return output.", input: "Context"},
+      schema: {"type" => "object"}
+    )
+
+    assert_equal "failed", result.status
+    assert_equal 1, result.attempt_count
+  ensure
+    original&.each do |key, value|
+      value ? ENV[key] = value : ENV.delete(key)
+    end
+  end
+
   def test_model_router_selects_vercel_gateway_configuration
     keys = %w[AI_REQUEST_EXTRACTION_PROVIDER AI_REQUEST_EXTRACTION_MODEL AI_GATEWAY_API_KEY]
     original = keys.to_h { |key| [key, ENV[key]] }
@@ -735,13 +774,16 @@ class HolocronAppTest < Minitest::Test
     version = generated.fetch("versions").find { |candidate| candidate.fetch("version_number") == 2 }
     assert_equal "AI-generated draft using linked and recent workspace context.", version.fetch("change_summary")
     section_types = version.fetch("sections").map { |section| section.fetch("section_type") }
-    assert_equal %w[overview attendees relationship_context prior_history objectives logistics notes], section_types
+    assert_equal %w[meeting_snapshot meeting_ask desired_outcomes decision_context talking_points risks open_questions notes], section_types
     material_sections = version.fetch("sections").reject { |section| section.fetch("section_type") == "notes" }
-    material_sections.select { |section| !section.fetch("body").empty? }.each do |section|
-      refute_empty section.fetch("sources"), "#{section.fetch('section_type')} should be cited"
+    material_sections.each do |section|
+      section.fetch("items").each do |item|
+        next if section.fetch("section_type") == "open_questions"
+        refute_empty item.fetch("sources"), "#{section.fetch('section_type')} item should be cited"
+      end
     end
-    logistics = version.fetch("sections").find { |section| section.fetch("section_type") == "logistics" }
-    assert_equal ["meeting"], logistics.fetch("sources").map { |source| source.fetch("source_type") }.uniq
+    snapshot = version.fetch("sections").find { |section| section.fetch("section_type") == "meeting_snapshot" }
+    assert_includes snapshot.fetch("sources").map { |source| source.fetch("source_type") }.uniq, "meeting"
     assert_includes version.fetch("sections").last.fetch("body"), "No prior interaction history"
     assert_includes generated.fetch("source_catalog").map { |source| source.fetch("source_type") }, "meeting"
 
@@ -752,7 +794,7 @@ class HolocronAppTest < Minitest::Test
     refute_nil audit
     payload = JSON.parse(audit.fetch(:payload))
     assert_equal "fake", payload.fetch("provider")
-    assert_equal "grounded-briefing-v2", payload.fetch("prompt_version")
+    assert_equal "action-briefing-v3", payload.fetch("prompt_version")
     assert_equal 2, payload.fetch("version_number")
     assert_operator payload.dig("retrieval", "source_count"), :>=, 4
     assert_equal audit_count + 1, Holocron::Database.db[:audit_events].count
@@ -800,10 +842,15 @@ class HolocronAppTest < Minitest::Test
     assert_equal "semantic", semantic_version.dig("generation", "retrieval", "strategy")
     assert_equal "hybrid", hybrid_version.dig("generation", "retrieval", "strategy")
     assert_equal true, hybrid_version.dig("generation", "retrieval", "attendee_balancing_enabled")
+    assert_equal 3, hybrid_version.dig("generation", "retrieval", "maximum_matches_per_person")
     assert_operator hybrid_version.dig("generation", "input_tokens"), :>, 0
+    cited_items = hybrid_version.fetch("sections").sum do |section|
+      section.fetch("items").count { |item| item.fetch("sources").any? }
+    end
+    assert_equal cited_items, hybrid_version.dig("generation", "cited_claim_count")
     assert_equal "AI-generated draft using attendee-balanced hybrid retrieval.", hybrid_version.fetch("change_summary")
-    hybrid_history = hybrid_version.fetch("sections").find { |section| section.fetch("section_type") == "prior_history" }
-    assert hybrid_history.fetch("body").empty? || hybrid_history.fetch("body").start_with?("- ")
+    hybrid_context = hybrid_version.fetch("sections").find { |section| section.fetch("section_type") == "decision_context" }
+    assert_operator hybrid_context.fetch("items").length, :<=, 4
 
     useful_claims = [semantic_version.dig("generation", "cited_claim_count"), 1].min
     post_json "/api/briefings/#{briefing.fetch('id')}/evaluate-generation", {
@@ -885,11 +932,12 @@ class HolocronAppTest < Minitest::Test
     assert_includes selected_people, "Darius Holt"
     assert_includes selected_people, "Rina Patel"
     assert_includes selected_people, "Sam Rivera"
+    assert prior_sources.group_by { |source| source.dig("facts", "person_name") }.values.all? { |records| records.length <= 3 }
     assert_operator manifest.dig("retrieval", "attendee_balanced_matches_selected"), :>=, 3
     assert_operator manifest.dig("retrieval", "attendees_with_history_selected"), :>=, 3
-    overview_refs = manifest.dig("section_source_refs", "overview")
-    overview_sources = manifest.fetch("sources").select { |source| overview_refs.include?(source.fetch("source_ref")) }
-    assert_equal %w[meeting scheduling_request], overview_sources.map { |source| source.fetch("source_type") }.sort
+    context_refs = manifest.dig("section_source_refs", "decision_context")
+    context_sources = manifest.fetch("sources").select { |source| context_refs.include?(source.fetch("source_ref")) }
+    assert context_sources.none? { |source| source["source_type"] == "interaction" && source.dig("facts", "current_request") }
   end
 
   def test_semantic_retrieval_never_crosses_workspace_boundary
@@ -955,6 +1003,21 @@ class HolocronAppTest < Minitest::Test
   def test_semantic_backfill_batches_and_is_idempotent
     db = Holocron::Database.db
     workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
+    person = db[:people].where(workspace_id: workspace.fetch(:id)).first
+    actor = db[:workspace_members].where(workspace_id: workspace.fetch(:id)).first
+    now = Time.now.utc
+    db[:interactions].insert(
+      id: SecureRandom.uuid,
+      workspace_id: workspace.fetch(:id),
+      person_id: person.fetch(:id),
+      authored_by_workspace_member_id: actor.fetch(:id),
+      interaction_type: "note",
+      summary: "Dedicated semantic backfill batching fixture.",
+      source_type: "manual",
+      occurred_at: now,
+      created_at: now,
+      updated_at: now
+    )
     interaction_count = db[:interactions].where(workspace_id: workspace.fetch(:id)).count
     db[:semantic_documents].where(workspace_id: workspace.fetch(:id)).delete
     previous_batch_size = ENV["SEMANTIC_EMBEDDING_BATCH_SIZE"]
@@ -974,7 +1037,7 @@ class HolocronAppTest < Minitest::Test
     ENV["SEMANTIC_EMBEDDING_BATCH_SIZE"] = previous_batch_size
   end
 
-  def test_grounded_generation_derives_relationship_context_from_linked_records
+  def test_grounded_generation_derives_a_cited_meeting_snapshot_from_linked_records
     briefing = create_briefing(isolated_request_overrides("relationship-context"))
 
     post_json "/api/briefings/#{briefing.fetch('id')}/generate", {
@@ -983,9 +1046,9 @@ class HolocronAppTest < Minitest::Test
 
     assert last_response.ok?
     version = parsed_response.fetch("versions").find { |candidate| candidate.fetch("version_number") == 2 }
-    relationship_context = version.fetch("sections").find { |section| section.fetch("section_type") == "relationship_context" }
-    assert_match(/are both affiliated with relationship-context organization/, relationship_context.fetch("body"))
-    assert_equal %w[organization person], relationship_context.fetch("sources").map { |source| source.fetch("source_type") }.uniq.sort
+    snapshot = version.fetch("sections").find { |section| section.fetch("section_type") == "meeting_snapshot" }
+    assert_match(/Participants/, snapshot.fetch("body"))
+    assert_includes snapshot.fetch("sources").map { |source| source.fetch("source_type") }.uniq, "person"
   end
 
   def test_briefing_list_omits_an_empty_relationship_context_from_its_section_count
@@ -1003,7 +1066,7 @@ class HolocronAppTest < Minitest::Test
 
   def test_briefing_schema_leaves_source_ref_uniqueness_to_application_validation
     source_refs = Holocron::BriefingGeneration::OUTPUT_SCHEMA
-      .dig("properties", "sections", "items", "properties", "source_refs")
+      .dig("properties", "sections", "items", "properties", "items", "items", "properties", "source_refs")
 
     refute source_refs.key?("uniqueItems")
   end
@@ -1059,11 +1122,13 @@ class HolocronAppTest < Minitest::Test
         {
           output: {
             "sections" => section_types.map do |section_type|
+              count = %w[desired_outcomes talking_points].include?(section_type) ? 2 : 1
               {
                 "section_type" => section_type,
                 "title" => section_type,
-                "body" => "Unsupported generated claim.",
-                "source_refs" => ["SRC-999"]
+                "items" => count.times.map do
+                  {"label" => "Claim", "text" => "Unsupported generated claim.", "source_refs" => ["SRC-999"]}
+                end
               }
             end,
             "limitations" => []
@@ -1099,7 +1164,7 @@ class HolocronAppTest < Minitest::Test
     assert_equal "test", JSON.parse(audit.fetch(:payload)).fetch("provider")
   end
 
-  def test_prior_history_rejects_the_current_request_interaction
+  def test_decision_context_rejects_the_current_request_interaction
     briefing = create_briefing(isolated_request_overrides("prior-history"))
     db = Holocron::Database.db
     workspace = db[:workspaces].first
@@ -1110,12 +1175,19 @@ class HolocronAppTest < Minitest::Test
     end
     output = {
       "sections" => Holocron::BriefingGeneration::MODEL_SECTION_TYPES.map do |section_type|
-        current_history = section_type == "prior_history"
+        current_context = section_type == "decision_context"
+        count = %w[desired_outcomes talking_points].include?(section_type) ? 2 : 1
+        fallback_ref = manifest.dig("section_source_refs", section_type)&.first
         {
           "section_type" => section_type,
           "title" => section_type,
-          "body" => current_history ? "The request arrived for this meeting." : "",
-          "source_refs" => current_history ? [current_interaction.fetch("source_ref")] : []
+          "items" => count.times.map do
+            {
+              "label" => "Item",
+              "text" => current_context ? "The request arrived for this meeting." : "Supported item.",
+              "source_refs" => current_context ? [current_interaction.fetch("source_ref")] : Array(fallback_ref)
+            }
+          end
         }
       end,
       "limitations" => []
@@ -1124,8 +1196,8 @@ class HolocronAppTest < Minitest::Test
     _sections, errors = Holocron::BriefingGeneration.normalize_output(output, manifest: manifest)
 
     assert_equal(
-      "Prior history may cite only interactions from before the current request.",
-      errors.fetch("sections.2.source_refs")
+      "Decision context may cite only interactions from before the current request.",
+      errors.fetch("sections.2.items.0.source_refs")
     )
   end
 

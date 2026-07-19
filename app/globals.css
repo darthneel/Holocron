@@ -1754,6 +1754,35 @@ a:focus-visible {
   color: var(--peach);
 }
 
+.briefing-structured-items {
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+  list-style: none;
+}
+
+.briefing-structured-items > li {
+  padding-left: 14px;
+  border-left: 2px solid var(--line-strong);
+}
+
+.briefing-structured-items p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.briefing-structured-items p strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .briefing-source-disclosure {
   margin-top: 14px;
 }
