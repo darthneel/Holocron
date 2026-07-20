@@ -48,7 +48,7 @@ type BriefingRecord = {
 
 const concepts: Concept[] = [
   {id: "cabinet", family: "Foundation", title: "The Cabinet", subtitle: "Decision dossier", description: "The real request workbench as a composed executive dossier with a persistent office rail."},
-  {id: "signal-room", family: "Foundation", title: "The Signal Room", subtitle: "Live intake board", description: "The same workflow recast as a wide operational board with a horizontal intake queue."},
+  {id: "signal-room", family: "Foundation", title: "The Signal Room", subtitle: "Live intake board", description: "The same workflow recast as a wide operational board with a persistent routing queue beside the active record."},
   {id: "ledger", family: "Minimalist", title: "Ledger", subtitle: "Reading workspace", description: "Requests and briefings become a quiet document index with a continuous reading pane."},
   {id: "margin", family: "Minimalist", title: "Margin", subtitle: "Calendar workspace", description: "Meeting requests are organized around time, availability, and a broad spatial calendar."},
   {id: "system-01", family: "Industrial", title: "System 01", subtitle: "Command review", description: "A sparse aviation-red command surface for decisive intake review and workflow transitions."},

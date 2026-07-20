@@ -37,6 +37,17 @@ import { FormEvent, useState } from "react";
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9292";
 const OFFICE_TIME_ZONE = "America/Denver";
 
+function HolocronMark() {
+  return (
+    <svg className="holocron-mark" viewBox="0 0 64 64" aria-hidden="true">
+      <path d="M46 8A24 24 0 0 0 46 56" />
+      <path d="M46 18A14 14 0 0 0 46 46" />
+      <path d="M46 27A5 5 0 0 0 46 37" />
+      <circle cx="53" cy="32" r="4.5" />
+    </svg>
+  );
+}
+
 type Session = {
   email: string;
   known_member: boolean;
@@ -1212,7 +1223,7 @@ export default function Home() {
       <div className="auth-shell">
         <aside className="auth-brand" aria-label="Holocron">
           <div className="wordmark wordmark-inverse">
-            <span className="wordmark-mark" aria-hidden="true">H</span>
+            <span className="wordmark-mark"><HolocronMark /></span>
             <span>Holocron</span>
           </div>
           <div className="auth-brand-copy">
@@ -1250,7 +1261,7 @@ export default function Home() {
   return (
     <div className="workspace-shell">
       <aside className="workspace-sidebar">
-        <div className="wordmark wordmark-inverse"><span className="wordmark-mark" aria-hidden="true">H</span><span>Holocron</span></div>
+        <div className="wordmark wordmark-inverse"><span className="wordmark-mark"><HolocronMark /></span><span>Holocron</span></div>
         <nav className="workspace-nav" aria-label="Workspace sections">
           <button type="button" aria-label="Meetings" className={activeView === "meetings" ? "is-active" : ""} aria-current={activeView === "meetings" ? "page" : undefined} onClick={() => void openWorkspaceView("meetings")}><CalendarDays aria-hidden="true" /><span>Meetings</span></button>
           <button type="button" aria-label="Relationships" className={activeView === "relationships" ? "is-active" : ""} aria-current={activeView === "relationships" ? "page" : undefined} onClick={() => void openWorkspaceView("relationships")}><Link2 aria-hidden="true" /><span>Relationships</span></button>
