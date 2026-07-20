@@ -32,6 +32,7 @@ test("server-renders the Holocron email entry screen", async () => {
   assert.match(html, /Holocron/);
   assert.match(html, /Welcome back/);
   assert.match(html, /type="email"/);
-  assert.match(html, /neelp22@gmail\.com/);
+  assert.match(html, /placeholder="you@office\.gov"/);
+  assert.doesNotMatch(html, /neelp22@gmail\.com/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });

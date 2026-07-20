@@ -832,6 +832,7 @@ module Holocron
       db = Database.db
       meeting = db[:meetings].where(id: briefing[:meeting_id]).first
       request = db[:scheduling_requests].where(id: meeting[:scheduling_request_id]).first
+      scheduler = db[:workspace_members].where(id: request[:assigned_scheduler_member_id]).first
       versions = db[:briefing_versions]
         .where(briefing_id: briefing[:id])
         .reverse_order(:version_number)
@@ -850,7 +851,8 @@ module Holocron
           requester_name: request[:requester_name],
           requester_organization: request[:requester_organization],
           purpose: request[:purpose],
-          status: request[:status]
+          status: request[:status],
+          assigned_scheduler: scheduler && serialize_member(scheduler)
         },
         created_by: serialize_member(creator),
         versions: versions,

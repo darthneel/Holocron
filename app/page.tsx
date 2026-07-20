@@ -3,7 +3,6 @@
 import {
   ArrowLeft,
   ArrowDown,
-  ArrowRight,
   ArrowUp,
   BookOpen,
   BriefcaseBusiness,
@@ -13,22 +12,17 @@ import {
   CheckCircle2,
   CircleHelp,
   Clock3,
-  Database,
   Inbox,
   Link2,
-  LogOut,
   MessageSquareText,
-  MapPin,
   Plus,
   Save,
-  Send,
   Sparkles,
   ScrollText,
   ShieldCheck,
   UserPlus,
   UserRound,
   UserRoundPlus,
-  UsersRound,
   X,
   XCircle,
 } from "lucide-react";
@@ -83,6 +77,7 @@ type Foundation = {
 type WorkspaceView = "meetings" | "relationships" | "foundation" | "members" | "audit";
 type MeetingsView = "requests" | "briefings";
 type LoadingView = WorkspaceView | "meeting-briefings";
+type WorkspaceTheme = "dark" | "light";
 
 function briefingTalkingPoints(body: string) {
   return body
@@ -373,6 +368,7 @@ type BriefingDetail = {
     requester_organization: string | null;
     purpose: string;
     status: string;
+    assigned_scheduler: WorkspaceMember | null;
   };
   created_by: {id: string; display_name: string};
   versions: BriefingVersion[];
@@ -542,6 +538,33 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatMeetingDate(value: string) {
+  return new Intl.DateTimeFormat("en", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    timeZone: OFFICE_TIME_ZONE,
+  }).format(new Date(value));
+}
+
+function formatMeetingTime(startsAt: string, endsAt: string) {
+  const format = new Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: OFFICE_TIME_ZONE,
+  });
+  const start = format.format(new Date(startsAt));
+  const end = format.format(new Date(endsAt));
+  const startPeriod = start.match(/\s(AM|PM)$/)?.[1];
+  const endPeriod = end.match(/\s(AM|PM)$/)?.[1];
+  return `${startPeriod === endPeriod ? start.replace(/\s(AM|PM)$/, "") : start}-${end}`;
+}
+
+function formatMeetingDuration(startsAt: string, endsAt: string) {
+  const minutes = Math.max(0, Math.round((new Date(endsAt).getTime() - new Date(startsAt).getTime()) / 60_000));
+  return `${minutes} minutes`;
+}
+
 function datetimeLocalValue(value: string | null) {
   if (!value) return "";
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -681,7 +704,7 @@ function briefingSectionsFromVersion(version: BriefingVersion): BriefingSectionF
 }
 
 export default function Home() {
-  const [email, setEmail] = useState("neelp22@gmail.com");
+  const [email, setEmail] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [foundation, setFoundation] = useState<Foundation | null>(null);
   const [requests, setRequests] = useState<RequestListItem[]>([]);
@@ -706,6 +729,8 @@ export default function Home() {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isRelationshipSaving, setIsRelationshipSaving] = useState(false);
   const [isBriefingSaving, setIsBriefingSaving] = useState(false);
+  const [workspaceTheme, setWorkspaceTheme] = useState<WorkspaceTheme>("dark");
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
   const canMutate = Boolean(session?.known_member);
   const schedulerMembers = foundation?.members.filter(
@@ -757,6 +782,7 @@ export default function Home() {
   }
 
   async function openWorkspaceView(view: WorkspaceView) {
+    setIsUserMenuOpen(false);
     setActiveView(view);
     setError("");
     if (typeof window !== "undefined") {
@@ -780,6 +806,7 @@ export default function Home() {
   }
 
   async function openMeetingsView(view: MeetingsView) {
+    setIsUserMenuOpen(false);
     setActiveView("meetings");
     setMeetingsView(view);
     setError("");
@@ -1166,14 +1193,6 @@ export default function Home() {
     });
   }
 
-  async function evaluateBriefingGeneration(versionNumber: number, usefulCitedClaims: number) {
-    if (!selectedBriefing) return false;
-    return briefingCommand(`/api/briefings/${selectedBriefing.id}/evaluate-generation`, {
-      version_number: versionNumber,
-      useful_cited_claims: usefulCitedClaims,
-    });
-  }
-
   async function submitBriefingForReview() {
     if (!selectedBriefing) return false;
     return briefingCommand(`/api/briefings/${selectedBriefing.id}/submit-review`, {
@@ -1191,6 +1210,7 @@ export default function Home() {
   }
 
   function signOut() {
+    setIsUserMenuOpen(false);
     setSession(null);
     setFoundation(null);
     setRequests([]);
@@ -1242,66 +1262,60 @@ export default function Home() {
   if (!session || !foundation) {
     return (
       <div className="auth-shell">
-        <aside className="auth-brand" aria-label="Holocron">
-          <div className="wordmark wordmark-inverse">
-            <span className="wordmark-mark"><HolocronMark /></span>
+        <div className="auth-signal-field" aria-hidden="true" />
+        <main className="auth-main">
+          <div className="auth-wordmark" aria-label="Holocron">
+            <HolocronMark className="auth-wordmark-mark" />
             <span>Holocron</span>
           </div>
-          <div className="auth-brand-copy">
-            <p className="eyebrow eyebrow-inverse">Principal operations</p>
-            <h1>One office.<br />Clear context.</h1>
-            <p>A focused workspace for the people, decisions, and priorities behind public leadership.</p>
-          </div>
-          <div className="auth-office-signal">
-            <Building2 aria-hidden="true" />
-            <div><span>Cedar Grove</span><strong>Mayor&apos;s Office</strong></div>
-          </div>
-        </aside>
-        <main className="auth-main">
-          <section className="auth-form-wrap" aria-labelledby="sign-in-title">
-            <div className="auth-heading">
-              <p className="eyebrow">Workspace access</p>
-              <h2 id="sign-in-title">Welcome back</h2>
-              <p>Enter your office email to continue.</p>
-            </div>
-            <form className="auth-form" onSubmit={handleSubmit} noValidate={false}>
-              <label htmlFor="email">Work email</label>
-              <input id="email" name="email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@office.gov" required />
-              {error ? <p className="form-error" role="alert">{error}</p> : null}
-              <button className="primary-button" type="submit" disabled={isLoading}>
-                <span>{isLoading ? "Opening workspace" : "Continue"}</span><ArrowRight aria-hidden="true" />
-              </button>
-            </form>
-            <div className="auth-footnote"><ShieldCheck aria-hidden="true" /><span>Local development workspace</span></div>
-          </section>
+          <form className="auth-form" onSubmit={handleSubmit} noValidate={false} aria-labelledby="sign-in-title">
+            <h1 id="sign-in-title">Welcome back</h1>
+            <label htmlFor="email">Work email</label>
+            <input id="email" name="email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@office.gov" required />
+            {error ? <p className="form-error" role="alert">{error}</p> : null}
+            <button className="primary-button" type="submit" disabled={isLoading}>
+              <span>{isLoading ? "Opening workspace" : "Continue"}</span><span aria-hidden="true">→</span>
+            </button>
+          </form>
         </main>
       </div>
     );
   }
 
   return (
-    <div className="workspace-shell">
-      <aside className="workspace-sidebar">
-        <div className="wordmark wordmark-inverse"><span className="wordmark-mark"><HolocronMark /></span><span>Holocron</span></div>
-        <nav className="workspace-nav" aria-label="Workspace sections">
-          <button type="button" aria-label="Meetings" className={activeView === "meetings" ? "is-active" : ""} aria-current={activeView === "meetings" ? "page" : undefined} onClick={() => void openWorkspaceView("meetings")}><CalendarDays aria-hidden="true" /><span>Meetings</span></button>
-          <button type="button" aria-label="Relationships" className={activeView === "relationships" ? "is-active" : ""} aria-current={activeView === "relationships" ? "page" : undefined} onClick={() => void openWorkspaceView("relationships")}><Link2 aria-hidden="true" /><span>Relationships</span></button>
-          <button type="button" aria-label="Foundation" className={activeView === "foundation" ? "is-active" : ""} aria-current={activeView === "foundation" ? "page" : undefined} onClick={() => void openWorkspaceView("foundation")}><Database aria-hidden="true" /><span>Foundation</span></button>
-          <button type="button" aria-label="Members" className={activeView === "members" ? "is-active" : ""} aria-current={activeView === "members" ? "page" : undefined} onClick={() => void openWorkspaceView("members")}><UsersRound aria-hidden="true" /><span>Members</span></button>
-          <button type="button" aria-label="Audit log" className={activeView === "audit" ? "is-active" : ""} aria-current={activeView === "audit" ? "page" : undefined} onClick={() => void openWorkspaceView("audit")}><ScrollText aria-hidden="true" /><span>Audit log</span></button>
-        </nav>
-        <div className="sidebar-profile">
-          <span className="profile-initials">{initials(session.display_name)}</span>
-          <div><strong>{session.display_name}</strong><span>{formatRole(session.role)}</span></div>
+    <div className={`workspace-shell theme-${workspaceTheme}`}>
+      <header className="workspace-header">
+        <div className="workspace-header-primary">
+          <div className="workspace-brand">
+            <span className="wordmark-mark"><HolocronMark /></span>
+            <strong>Holocron</strong>
+            <span className="workspace-name"><i aria-hidden="true">|</i>{foundation.workspace.name}</span>
+          </div>
+          <div className="workspace-controls">
+            <div className="theme-toggle" role="group" aria-label="Color theme">
+              <button type="button" className={workspaceTheme === "light" ? "is-active" : ""} aria-pressed={workspaceTheme === "light"} onClick={() => setWorkspaceTheme("light")}>Light</button>
+              <button type="button" className={workspaceTheme === "dark" ? "is-active" : ""} aria-pressed={workspaceTheme === "dark"} onClick={() => setWorkspaceTheme("dark")}>Dark</button>
+            </div>
+            <div className="workspace-user-menu">
+              <button className="workspace-user-trigger" type="button" aria-haspopup="menu" aria-expanded={isUserMenuOpen} onClick={() => setIsUserMenuOpen((current) => !current)}>
+                <span className="profile-initials">{initials(session.display_name)}</span>
+                <span>{session.display_name}</span>
+                <small aria-hidden="true">⌄</small>
+              </button>
+              {isUserMenuOpen ? <div className="workspace-user-popover" role="menu"><button type="button" role="menuitem" onClick={signOut}>Sign out</button></div> : null}
+            </div>
+          </div>
         </div>
-      </aside>
+        <nav className="workspace-nav" aria-label="Workspace sections">
+          <button type="button" aria-label="Meetings" className={activeView === "meetings" ? "is-active" : ""} aria-current={activeView === "meetings" ? "page" : undefined} onClick={() => void openWorkspaceView("meetings")}><small aria-hidden="true">01</small><span>Meetings</span></button>
+          <button type="button" aria-label="Relationships" className={activeView === "relationships" ? "is-active" : ""} aria-current={activeView === "relationships" ? "page" : undefined} onClick={() => void openWorkspaceView("relationships")}><small aria-hidden="true">02</small><span>Relationships</span></button>
+          <button type="button" aria-label="Foundation" className={activeView === "foundation" ? "is-active" : ""} aria-current={activeView === "foundation" ? "page" : undefined} onClick={() => void openWorkspaceView("foundation")}><small aria-hidden="true">03</small><span>Foundation</span></button>
+          <button type="button" aria-label="Members" className={activeView === "members" ? "is-active" : ""} aria-current={activeView === "members" ? "page" : undefined} onClick={() => void openWorkspaceView("members")}><small aria-hidden="true">04</small><span>Members</span></button>
+          <button type="button" aria-label="Audit log" className={activeView === "audit" ? "is-active" : ""} aria-current={activeView === "audit" ? "page" : undefined} onClick={() => void openWorkspaceView("audit")}><small aria-hidden="true">05</small><span>Audit log</span></button>
+        </nav>
+      </header>
 
       <div className="workspace-body">
-        <header className="workspace-header">
-          <div><span className="header-label">Workspace</span><strong>{foundation.workspace.name}</strong></div>
-          <button className="icon-text-button" type="button" aria-label="Sign out" onClick={signOut}><LogOut aria-hidden="true" /><span>Sign out</span></button>
-        </header>
-
         <main className="workspace-main">
           {loadingView === activeView ? (
             <section className="workspace-page-loading" aria-live="polite">
@@ -1335,7 +1349,7 @@ export default function Home() {
 
             <div className="request-workbench">
               <div className="request-inbox" aria-label="Scheduling request inbox">
-                <div className="request-inbox-head"><span>{requests.length} {requests.length === 1 ? "request" : "requests"}</span><span>Updated</span></div>
+                <div className="request-inbox-head"><span>{requests.length} {requests.length === 1 ? "request" : "requests"}</span></div>
                 {requests.length === 0 ? <div className="empty-inbox"><Inbox aria-hidden="true" /><strong>No scheduling requests yet</strong><span>New requests will appear here.</span></div> : requests.map((request) => (
                   <button className={`request-row ${selectedRequest?.id === request.id && mode === "inbox" ? "is-selected" : ""}`} type="button" key={request.id} onClick={() => selectRequest(request.id)}>
                     <span className="request-source">{sourceLabels[request.source_channel]}</span>
@@ -1412,7 +1426,6 @@ export default function Home() {
             isSaving={isBriefingSaving}
             onSelect={selectBriefing}
             onGenerate={generateBriefing}
-            onEvaluate={evaluateBriefingGeneration}
             onSaveVersion={saveBriefingVersion}
             onSubmitReview={submitBriefingForReview}
             onReview={reviewBriefing}
@@ -1459,14 +1472,13 @@ export default function Home() {
   );
 }
 
-function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, onSelect, onGenerate, onEvaluate, onSaveVersion, onSubmitReview, onReview }: {
+function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, onSelect, onGenerate, onSaveVersion, onSubmitReview, onReview }: {
   briefings: BriefingListItem[];
   selectedBriefing: BriefingDetail | null;
   canMutate: boolean;
   isSaving: boolean;
   onSelect: (id: string) => Promise<void>;
   onGenerate: (strategy: RetrievalStrategy) => Promise<boolean>;
-  onEvaluate: (versionNumber: number, usefulCitedClaims: number) => Promise<boolean>;
   onSaveVersion: (payload: Record<string, unknown>) => Promise<boolean>;
   onSubmitReview: () => Promise<boolean>;
   onReview: (decision: string, notes: string) => Promise<boolean>;
@@ -1597,11 +1609,12 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
             <div className="briefing-empty"><BookOpen aria-hidden="true" /><strong>No briefings yet</strong><span>Scheduled meetings will appear here.</span></div>
           ) : briefings.map((briefing) => (
             <button className={`briefing-row ${selectedBriefing?.id === briefing.id ? "is-selected" : ""}`} type="button" key={briefing.id} onClick={() => select(briefing.id)}>
+              <span className="briefing-source">{briefing.requester_name}</span>
               <span className={`briefing-status briefing-status-${briefing.status}`}>{briefingStatusLabels[briefing.status]}</span>
               <strong>{briefing.meeting.title}</strong>
-              <span>{briefing.requester_name}{briefing.requester_organization ? ` · ${briefing.requester_organization}` : ""}</span>
-              <small>Version {briefing.current_version_number} · {briefing.section_count} sections</small>
-              <time dateTime={briefing.meeting.starts_at}>{formatDateTime(briefing.meeting.starts_at)}</time>
+              <p>{briefing.requester_organization || "Independent requester"}</p>
+              <small>{formatMeetingDuration(briefing.meeting.starts_at, briefing.meeting.ends_at)}</small>
+              <time dateTime={briefing.meeting.starts_at}>{formatMeetingDate(briefing.meeting.starts_at)}</time>
             </button>
           ))}
         </div>
@@ -1611,10 +1624,13 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
             <div className="briefing-empty-panel"><BookOpen aria-hidden="true" /><h3>Select a briefing</h3><p>Meeting preparation and approved versions appear here.</p></div>
           ) : (
             <article className="briefing-detail">
-              <div className="briefing-detail-head">
-                <div><p className="eyebrow">{selectedBriefing.request.requester_name}</p><h3>{selectedBriefing.meeting.title}</h3><span>{selectedBriefing.request.requester_organization || "Independent requester"}</span></div>
-                <span className={`briefing-status briefing-status-${selectedBriefing.status}`}>{briefingStatusLabels[selectedBriefing.status]}</span>
-              </div>
+              <header className="briefing-detail-head">
+                <div>
+                  <p className="eyebrow">Meeting briefing</p>
+                  <h3>{selectedBriefing.meeting.title}</h3>
+                  <span className={`briefing-status briefing-status-${selectedBriefing.status}`}>{briefingStatusLabels[selectedBriefing.status]}</span>
+                </div>
+              </header>
 
               <div className="briefing-version-bar">
                 <label><span>Version</span><select value={viewedVersion.version_number} onChange={(event) => { setViewedVersionNumber(Number(event.target.value)); setMode("view"); setExpandedSources({}); }}>
@@ -1623,25 +1639,12 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                 <div><strong>{viewedVersion.change_summary || `Version ${viewedVersion.version_number}`}</strong><span>{viewedVersion.created_by.display_name} · {formatDateTime(viewedVersion.created_at)}</span></div>
               </div>
 
-              {selectedBriefing.versions.some((version) => version.generation) ? (
-                <GenerationComparison
-                  key={`${selectedBriefing.id}-${selectedBriefing.lock_version}`}
-                  versions={selectedBriefing.versions}
-                  isSaving={isSaving}
-                  onEvaluate={onEvaluate}
-                />
-              ) : null}
-
               <div className="briefing-meeting-facts">
-                <div><CalendarCheck aria-hidden="true" /><span><small>Meeting</small><strong>{formatDateTime(selectedBriefing.meeting.starts_at)}</strong></span></div>
-                <div><Clock3 aria-hidden="true" /><span><small>Ends</small><strong>{formatDateTime(selectedBriefing.meeting.ends_at)}</strong></span></div>
-                <div><MapPin aria-hidden="true" /><span><small>Location</small><strong>{selectedBriefing.meeting.location || "Not specified"}</strong></span></div>
+                <div><span>Scheduler</span><strong>{selectedBriefing.request.assigned_scheduler?.display_name || "Unassigned"}</strong></div>
+                <div><span>Date</span><strong>{formatMeetingDate(selectedBriefing.meeting.starts_at)}</strong></div>
+                <div><span>Time</span><strong>{formatMeetingTime(selectedBriefing.meeting.starts_at, selectedBriefing.meeting.ends_at)}</strong></div>
+                <div><span>Location</span><strong>{selectedBriefing.meeting.location || "Not specified"}</strong></div>
               </div>
-
-              <RetrievalBoundary
-                sources={viewedVersion.sections.flatMap((section) => section.sources)}
-                generation={viewedVersion.generation}
-              />
 
               {mode === "edit" ? (
                 <form className="briefing-editor" onSubmit={saveVersion}>
@@ -1680,39 +1683,14 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                   <div className="briefing-sections">
                     {viewedVersion.sections.filter((section) => (
                       section.section_type !== "relationship_context" || Boolean(section.body)
-                    )).map((section) => (
-                      <section className="briefing-content-section" key={section.id}>
+                    )).map((section) => {
+                      const sectionSources = Array.from(new Map(
+                        [...section.sources, ...section.items.flatMap((item) => item.sources)].map((source) => [`${source.source_type}:${source.source_id}`, source]),
+                      ).values());
+                      return <section className="briefing-content-section" key={section.id}>
                         <div><span>{briefingSectionLabels[section.section_type]}</span><h4>{section.title}</h4></div>
-                        {section.items.length > 0 ? (
-                          <ul className="briefing-structured-items">
-                            {section.items.map((item, itemIndex) => {
-                              const itemKey = `${section.id}-item-${itemIndex}`;
-                              return <li key={itemKey}>
-                                <p>{item.label ? <strong>{item.label}</strong> : null}{item.text}</p>
-                                {item.sources.length > 0 ? <div className="briefing-source-disclosure">
-                                  <button
-                                    className="briefing-sources-toggle"
-                                    type="button"
-                                    aria-expanded={Boolean(expandedSources[itemKey])}
-                                    aria-controls={`briefing-sources-${itemKey}`}
-                                    onClick={() => setExpandedSources((current) => ({...current, [itemKey]: !current[itemKey]}))}
-                                  >
-                                    <Link2 aria-hidden="true" />
-                                    <span>{item.sources.length} {item.sources.length === 1 ? "source" : "sources"}</span>
-                                  </button>
-                                  {expandedSources[itemKey] ? <div id={`briefing-sources-${itemKey}`} className="briefing-sources">{item.sources.map((source) => <div key={`${source.source_type}-${source.source_id}`}><Link2 aria-hidden="true" /><span><strong>{source.source_label}</strong><small>{formatRelationshipType(source.source_type)}{source.source_excerpt ? ` · ${source.source_excerpt}` : ""}</small></span></div>)}</div> : null}
-                                </div> : null}
-                              </li>;
-                            })}
-                          </ul>
-                        ) : section.body ? (
-                          section.section_type === "objectives" ? (
-                            <ul className="briefing-talking-points">
-                              {briefingTalkingPoints(section.body).map((point, index) => <li key={`${section.id}-point-${index}`}>{point}</li>)}
-                            </ul>
-                          ) : <p>{section.body}</p>
-                        ) : <p className="muted-value">{emptyBriefingSectionText(section.section_type)}</p>}
-                        {section.items.length === 0 && section.sources.length > 0 ? <div className="briefing-source-disclosure">
+                        {section.items.length > 0 ? <ul className="briefing-structured-items">{section.items.map((item, itemIndex) => <li key={`${section.id}-item-${itemIndex}`}><p>{item.label ? <strong>{item.label}</strong> : null}{item.text}</p></li>)}</ul> : section.body ? section.section_type === "objectives" ? <ul className="briefing-talking-points">{briefingTalkingPoints(section.body).map((point, index) => <li key={`${section.id}-point-${index}`}>{point}</li>)}</ul> : <p>{section.body}</p> : <p className="muted-value">{emptyBriefingSectionText(section.section_type)}</p>}
+                        {sectionSources.length > 0 ? <div className="briefing-source-disclosure">
                           <button
                             className="briefing-sources-toggle"
                             type="button"
@@ -1721,21 +1699,19 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                             onClick={() => setExpandedSources((current) => ({...current, [section.id]: !current[section.id]}))}
                           >
                             <Link2 aria-hidden="true" />
-                            <span>{section.sources.length} {section.sources.length === 1 ? "source" : "sources"}</span>
+                            <span>{sectionSources.length} {sectionSources.length === 1 ? "source" : "sources"}</span>
                           </button>
-                          {expandedSources[section.id] ? <div id={`briefing-sources-${section.id}`} className="briefing-sources">{section.sources.map((source) => <div key={`${source.source_type}-${source.source_id}`}><Link2 aria-hidden="true" /><span><strong>{source.source_label}</strong><small>{formatRelationshipType(source.source_type)}{source.source_excerpt ? ` · ${source.source_excerpt}` : ""}</small></span></div>)}</div> : null}
+                          {expandedSources[section.id] ? <div id={`briefing-sources-${section.id}`} className="briefing-sources">{sectionSources.map((source) => <div key={`${source.source_type}-${source.source_id}`}><Link2 aria-hidden="true" /><span><strong>{source.source_label}</strong><small>{formatRelationshipType(source.source_type)}{source.source_excerpt ? ` · ${source.source_excerpt}` : ""}</small></span></div>)}</div> : null}
                         </div> : null}
-                      </section>
-                    ))}
+                      </section>;
+                    })}
                   </div>
-
-                  {viewedVersion.review ? <div className={`briefing-review-record briefing-review-${viewedVersion.review.decision}`}><CheckCircle2 aria-hidden="true" /><div><strong>{briefingStatusLabels[viewedVersion.review.decision]}</strong><span>{viewedVersion.review.reviewed_by.display_name} · {formatDateTime(viewedVersion.review.reviewed_at)}</span>{viewedVersion.review.notes ? <p>{viewedVersion.review.notes}</p> : null}</div></div> : null}
 
                   {canMutate && viewingCurrentVersion ? (
                     <div className="briefing-actions">
-                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}><Link2 aria-hidden="true" /><span>{isSaving ? "Generating" : hasGeneratedCurrentVersion ? "Generate linked" : "Generate linked draft"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate semantic"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}><UsersRound aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate hybrid"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("fused")} disabled={isSaving}><Database aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate fused"}</span></button><button className="icon-text-button" type="button" onClick={beginRevision} disabled={isSaving}><Save aria-hidden="true" /><span>Edit as new version</span></button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}><Send aria-hidden="true" /><span>{isSaving ? "Submitting" : "Submit for review"}</span></button></> : null}
-                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}><Link2 aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate linked"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}><Sparkles aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate semantic"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}><UsersRound aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate hybrid"}</span></button><button className="icon-text-button" type="button" onClick={() => generateDraft("fused")} disabled={isSaving}><Database aria-hidden="true" /><span>{isSaving ? "Generating" : "Generate fused"}</span></button><button className="primary-command" type="button" onClick={beginRevision} disabled={isSaving}><Plus aria-hidden="true" /><span>Create revision</span></button></> : null}
-                      {selectedBriefing.status === "in_review" ? <div className="briefing-review-form"><Field label="Review notes"><textarea rows={2} value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} /></Field><div><button className="icon-text-button" type="button" onClick={() => decide("changes_requested")} disabled={isSaving || !reviewNotes.trim()}><XCircle aria-hidden="true" /><span>Request changes</span></button><button className="primary-command" type="button" onClick={() => decide("approved")} disabled={isSaving}><CheckCircle2 aria-hidden="true" /><span>{isSaving ? "Saving" : "Approve version"}</span></button></div></div> : null}
+                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}>{isSaving ? "Generating" : hasGeneratedCurrentVersion ? "Generate linked" : "Generate linked draft"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}>{isSaving ? "Generating" : "Generate semantic"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}>{isSaving ? "Generating" : "Generate hybrid"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("fused")} disabled={isSaving}>{isSaving ? "Generating" : "Generate fused"}</button><button className="icon-text-button" type="button" onClick={beginRevision} disabled={isSaving}>Edit as new version</button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}>{isSaving ? "Submitting" : "Submit for review"}</button></> : null}
+                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}>{isSaving ? "Generating" : "Generate linked"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}>{isSaving ? "Generating" : "Generate semantic"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}>{isSaving ? "Generating" : "Generate hybrid"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("fused")} disabled={isSaving}>{isSaving ? "Generating" : "Generate fused"}</button><button className="primary-command" type="button" onClick={beginRevision} disabled={isSaving}>Create revision</button></> : null}
+                      {selectedBriefing.status === "in_review" ? <div className="briefing-review-form"><Field label="Review notes"><textarea rows={2} value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} /></Field><div><button className="icon-text-button" type="button" onClick={() => decide("changes_requested")} disabled={isSaving || !reviewNotes.trim()}>Request changes</button><button className="primary-command" type="button" onClick={() => decide("approved")} disabled={isSaving}>{isSaving ? "Saving" : "Approve version"}</button></div></div> : null}
                     </div>
                   ) : null}
                 </>
@@ -1745,84 +1721,6 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
         </div>
       </div>
     </section>
-  );
-}
-
-function GenerationComparison({ versions, isSaving, onEvaluate }: {
-  versions: BriefingVersion[];
-  isSaving: boolean;
-  onEvaluate: (versionNumber: number, usefulCitedClaims: number) => Promise<boolean>;
-}) {
-  const compared = (["linked_recency", "semantic", "hybrid", "fused"] as const).map((strategy) => ({
-    strategy,
-    version: versions
-      .filter((candidate) => candidate.generation?.retrieval_strategy === strategy)
-      .sort((left, right) => right.version_number - left.version_number)[0] ?? null,
-  }));
-  const [ratings, setRatings] = useState<Record<number, string>>(() => Object.fromEntries(
-    compared.filter((item) => item.version).map((item) => [
-      item.version!.version_number,
-      item.version!.generation!.useful_cited_claims?.toString() ?? "",
-    ]),
-  ));
-
-  async function saveRating(version: BriefingVersion) {
-    const value = Number(ratings[version.version_number]);
-    if (!Number.isInteger(value) || value < 0) return;
-    await onEvaluate(version.version_number, value);
-  }
-
-  return (
-    <section className="generation-comparison" aria-labelledby="generation-comparison-title">
-      <div className="generation-comparison-heading"><div><p className="eyebrow">Control / treatment</p><strong id="generation-comparison-title">Retrieval efficiency</strong></div><span>Useful cited claims ÷ input tokens</span></div>
-      <div className="generation-comparison-grid">
-        {compared.map(({strategy, version}) => (
-          <article key={strategy} className={version ? "has-generation" : "is-empty"}>
-            <div className="generation-strategy"><span>{strategy === "semantic" ? <Sparkles aria-hidden="true" /> : strategy === "hybrid" ? <UsersRound aria-hidden="true" /> : strategy === "fused" ? <Database aria-hidden="true" /> : <Link2 aria-hidden="true" />}{strategy === "semantic" ? "Semantic" : strategy === "hybrid" ? "Hybrid balanced" : strategy === "fused" ? "Fused + bursts" : "Linked + recent"}</span>{version ? <small>Version {version.version_number}</small> : null}</div>
-            {!version || !version.generation ? <p>Generate this path to add it to the comparison.</p> : <>
-              <div className="generation-metrics">
-                <div><span>Input</span><strong>{version.generation.input_tokens ?? "—"}</strong><small>tokens</small></div>
-                <div><span>Cited</span><strong>{version.generation.cited_claim_count}</strong><small>claims</small></div>
-                <div><span>Context</span><strong>{version.generation.retrieval.context_characters ?? "—"}</strong><small>characters</small></div>
-                <div><span>Efficiency</span><strong>{version.generation.useful_claims_per_1k_input_tokens ?? "—"}</strong><small>per 1k tokens</small></div>
-              </div>
-              <div className="generation-rating">
-                <label htmlFor={`useful-claims-${version.version_number}`}>Useful cited claims</label>
-                <div><input id={`useful-claims-${version.version_number}`} type="number" min="0" max={version.generation.cited_claim_count} value={ratings[version.version_number] ?? ""} onChange={(event) => setRatings((current) => ({...current, [version.version_number]: event.target.value}))} placeholder={`0–${version.generation.cited_claim_count}`} /><button type="button" className="subtle-command" onClick={() => saveRating(version)} disabled={isSaving || ratings[version.version_number] === ""}>Save rating</button></div>
-              </div>
-            </>}
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function RetrievalBoundary({ sources, generation }: { sources: BriefingSource[]; generation: BriefingVersion["generation"] }) {
-  const uniqueSources = Array.from(new Map(sources.map((source) => [`${source.source_type}:${source.source_id}`, source])).values());
-  const people = uniqueSources.filter((source) => source.source_type === "person").length;
-  const organizations = uniqueSources.filter((source) => source.source_type === "organization").length;
-  const interactions = uniqueSources.filter((source) => source.source_type === "interaction").length;
-  const strategy = generation?.retrieval_strategy;
-  const semantic = strategy === "semantic";
-  const hybrid = strategy === "hybrid";
-  const fused = strategy === "fused";
-  const semanticRetrieval = semantic || hybrid || fused;
-
-  return (
-    <aside className="retrieval-boundary" aria-label="Retrieval boundary">
-      <div className="retrieval-boundary-heading">
-        <div><p className="eyebrow">Retrieval boundary</p><strong>Why this context is here</strong></div>
-        <span className="retrieval-mode">{semantic ? <Sparkles aria-hidden="true" /> : hybrid ? <UsersRound aria-hidden="true" /> : fused ? <Database aria-hidden="true" /> : <Link2 aria-hidden="true" />}{semantic ? "Semantic" : hybrid ? "Hybrid" : fused ? "Fused" : "Exact links"}</span>
-      </div>
-      <div className="retrieval-boundary-grid">
-        <div><strong>{people}</strong><span>linked {people === 1 ? "person" : "people"}</span></div>
-        <div><strong>{organizations}</strong><span>linked {organizations === 1 ? "organization" : "organizations"}</span></div>
-        <div><strong>{interactions}</strong><span>history records</span></div>
-      </div>
-      <p>{fused ? "This version fuses semantic, exact-term, attendee-scoped, and recency rankings. High-signal child passages improve matching, while every result is collapsed back to one authoritative interaction." : hybrid ? "This version preserves verified request links, reserves semantically relevant history across the attendees, then fills remaining context with the strongest workspace matches. Each section has its own citation boundary." : semantic ? "This version preserves verified request links, then ranks prior interactions by semantic similarity inside the current workspace only." : "This version follows explicit person and organization links, then selects recent interactions. It does not search the workspace for older or unlinked semantic matches."}</p>
-      <div className="retrieval-demo-cue">{fused ? <Database aria-hidden="true" /> : hybrid ? <UsersRound aria-hidden="true" /> : <Sparkles aria-hidden="true" />}<span><strong>{fused ? "Fused evidence" : hybrid ? "Balanced evidence" : semantic ? "Semantic evidence" : "Control path"}</strong> {semanticRetrieval ? `${generation?.retrieval.semantic_matches_selected ?? interactions} interactions were selected${fused ? ` from ${generation?.retrieval.vector_candidates ?? "—"} vector and ${generation?.retrieval.lexical_candidates ?? "—"} lexical candidates` : hybrid ? ` across ${generation?.retrieval.attendees_with_history_selected ?? "—"} attendees` : ""}.` : "Generate another retrieval version of this same briefing to compare context size, citations, and model input tokens."}</span></div>
-    </aside>
   );
 }
 
