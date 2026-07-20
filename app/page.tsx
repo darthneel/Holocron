@@ -1327,8 +1327,8 @@ export default function Home() {
 
           {activeView === "meetings" ? <div className="meetings-view">
             <nav className="meetings-tabs" aria-label="Meeting workspace views">
-              <button type="button" className={meetingsView === "requests" ? "is-active" : ""} aria-current={meetingsView === "requests" ? "page" : undefined} onClick={() => void openMeetingsView("requests")}><Inbox aria-hidden="true" /><span>Requests</span></button>
-              <button type="button" className={meetingsView === "briefings" ? "is-active" : ""} aria-current={meetingsView === "briefings" ? "page" : undefined} onClick={() => void openMeetingsView("briefings")}><BookOpen aria-hidden="true" /><span>Briefings</span></button>
+              <button type="button" className={meetingsView === "requests" ? "is-active" : ""} aria-current={meetingsView === "requests" ? "page" : undefined} onClick={() => void openMeetingsView("requests")}><span>Requests</span></button>
+              <button type="button" className={meetingsView === "briefings" ? "is-active" : ""} aria-current={meetingsView === "briefings" ? "page" : undefined} onClick={() => void openMeetingsView("briefings")}><span>Briefings</span></button>
             </nav>
 
           {meetingsView === "requests" ? (
@@ -1600,7 +1600,6 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
     <section id="briefings" className="workspace-section briefings-section">
       <div className="section-heading-row compact">
         <div><p className="eyebrow">Meeting preparation</p><h2>Briefings</h2></div>
-        <span className="section-count">{briefings.length} {briefings.length === 1 ? "briefing" : "briefings"}</span>
       </div>
 
       <div className="briefing-workbench">
