@@ -79,11 +79,16 @@ type MeetingsView = "requests" | "briefings";
 type LoadingView = WorkspaceView | "meeting-briefings";
 type WorkspaceTheme = "dark" | "light";
 
-function briefingTalkingPoints(body: string) {
+function briefingListItems(body: string) {
   return body
     .split(/\r?\n/)
-    .map((line) => line.trim().replace(/^(?:[-*]|\d+[.)])\s+/, ""))
+    .map((line) => line.trim().replace(/^(?:[-*•]|\d+[.)])\s+/, ""))
     .filter(Boolean);
+}
+
+function isBriefingList(body: string) {
+  const lines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return lines.length > 1 && lines.every((line) => /^(?:[-*•]|\d+[.)])\s+/.test(line));
 }
 
 function emptyBriefingSectionText(sectionType: string) {
@@ -1686,9 +1691,10 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                       const sectionSources = Array.from(new Map(
                         [...section.sources, ...section.items.flatMap((item) => item.sources)].map((source) => [`${source.source_type}:${source.source_id}`, source]),
                       ).values());
+                      const bodyIsList = Boolean(section.body) && (section.section_type === "objectives" || isBriefingList(section.body));
                       return <section className="briefing-content-section" key={section.id}>
                         <div><span>{briefingSectionLabels[section.section_type]}</span><h4>{section.title}</h4></div>
-                        {section.items.length > 0 ? <ul className="briefing-structured-items">{section.items.map((item, itemIndex) => <li key={`${section.id}-item-${itemIndex}`}><p>{item.label ? <strong>{item.label}</strong> : null}{item.text}</p></li>)}</ul> : section.body ? section.section_type === "objectives" ? <ul className="briefing-talking-points">{briefingTalkingPoints(section.body).map((point, index) => <li key={`${section.id}-point-${index}`}>{point}</li>)}</ul> : <p>{section.body}</p> : <p className="muted-value">{emptyBriefingSectionText(section.section_type)}</p>}
+                        {section.items.length > 0 ? <ul className="content-list">{section.items.map((item, itemIndex) => <li key={`${section.id}-item-${itemIndex}`}><p>{item.label ? <strong>{item.label}</strong> : null}{item.text}</p></li>)}</ul> : section.body ? bodyIsList ? <ul className="content-list">{briefingListItems(section.body).map((item, index) => <li key={`${section.id}-item-${index}`}>{item}</li>)}</ul> : <p>{section.body}</p> : <p className="muted-value">{emptyBriefingSectionText(section.section_type)}</p>}
                         {sectionSources.length > 0 ? <div className="briefing-source-disclosure">
                           <button
                             className="briefing-sources-toggle"
@@ -2028,7 +2034,7 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
   }
 
   return (
-    <article className="request-detail">
+    <article className={`request-detail ${request.status === "scheduled" ? "request-detail-scheduled" : ""}`}>
       <div className="request-panel-head">
         <div>
           <p className="eyebrow">{sourceLabels[request.source_channel]}</p>

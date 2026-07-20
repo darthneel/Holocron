@@ -4796,9 +4796,58 @@ a:focus-visible {
   box-shadow: 0 18px 48px rgba(34, 52, 54, 0.14);
 }
 
+/* Content uses one semantic list treatment across briefings and request detail. */
+.content-list {
+  max-width: 760px;
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.65;
+  list-style: disc;
+}
+
+.content-list li {
+  padding: 0;
+}
+
+.content-list li + li {
+  margin-top: 5px;
+}
+
+.content-list li::marker {
+  color: var(--accent);
+}
+
+.content-list p,
+.content-list p strong {
+  display: inline;
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+
+.content-list p strong::after {
+  content: " ";
+}
+
+.theme-light .content-list {
+  color: var(--ink-soft);
+}
+
 /* Status color is reserved for workflow meaning: green only marks a completed state. */
 .meeting-briefing-block {
   border-top: 0;
+}
+
+.request-detail-scheduled .request-panel-head {
+  border-bottom: 0;
+}
+
+.request-detail-scheduled .meeting-briefing-block {
+  border-top: 1px solid var(--line-strong);
 }
 
 .request-status-submitted {
