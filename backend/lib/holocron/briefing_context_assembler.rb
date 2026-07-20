@@ -7,8 +7,8 @@ require_relative "semantic_index"
 
 module Holocron
   class BriefingContextAssembler
-    CONTEXT_VERSION = "briefing-context-v4"
-    RETRIEVAL_STRATEGIES = %w[linked_recency semantic hybrid].freeze
+    CONTEXT_VERSION = "briefing-context-v5"
+    RETRIEVAL_STRATEGIES = %w[linked_recency semantic hybrid fused].freeze
     MAX_PEOPLE = 12
     MAX_CURRENT_INTERACTIONS_PER_PERSON = 2
     MAX_PRIOR_INTERACTIONS_PER_PERSON = 5
@@ -43,7 +43,8 @@ module Holocron
           request: request,
           meeting: meeting,
           people: people,
-          attendee_balanced: @strategy == "hybrid"
+          attendee_balanced: %w[hybrid fused].include?(@strategy),
+          fused: @strategy == "fused"
         )
       else
         selected, omitted = request_interactions(request[:id], people)
@@ -191,7 +192,7 @@ module Holocron
       [selected, omitted]
     end
 
-    def semantic_interactions(request:, meeting:, people:, attendee_balanced: false)
+    def semantic_interactions(request:, meeting:, people:, attendee_balanced: false, fused: false)
       current = current_request_interactions(request[:id], people)
       result = SemanticIndex.new(
         workspace: @workspace,
@@ -202,18 +203,29 @@ module Holocron
         limit: MAX_INTERACTIONS - current.length,
         balanced_person_ids: attendee_balanced ? people.map { |person| person[:id] } : [],
         per_person_limit: 2,
-        max_per_person: attendee_balanced ? 3 : nil
+        max_per_person: attendee_balanced ? 3 : nil,
+        fused: fused
       )
       selected = (current + result.fetch(:interactions)).uniq { |interaction| interaction[:id] }.first(MAX_INTERACTIONS)
       metadata = {
         "semantic_records_indexed" => result[:indexed_records],
+        "semantic_interactions_indexed" => result[:indexed_interactions],
+        "semantic_overview_records" => result[:overview_records],
+        "semantic_burst_records" => result[:burst_records],
         "semantic_records_refreshed" => result[:refreshed_records],
+        "semantic_records_removed" => result[:removed_records],
         "embedding_provider" => result[:embedding_provider],
         "embedding_model" => result[:embedding_model],
         "vector_backend" => result[:vector_backend],
         "embedding_indexing_tokens" => result[:indexing_tokens],
         "embedding_query_tokens" => result[:query_tokens],
         "minimum_similarity" => result[:minimum_similarity],
+        "fusion_enabled" => result[:fusion_enabled],
+        "fusion_method" => result[:fusion_method],
+        "rrf_k" => result[:rrf_k],
+        "vector_candidates" => result[:vector_candidates],
+        "lexical_candidates" => result[:lexical_candidates],
+        "attendee_candidates" => result[:attendee_candidates],
         "semantic_matches_selected" => result.fetch(:interactions).length,
         "attendee_balancing_enabled" => attendee_balanced,
         "maximum_matches_per_person" => attendee_balanced ? 3 : nil,
@@ -246,7 +258,7 @@ module Holocron
     end
 
     def semantic_strategy?
-      %w[semantic hybrid].include?(@strategy)
+      %w[semantic hybrid fused].include?(@strategy)
     end
 
     def section_source_refs(sources)
@@ -380,11 +392,15 @@ module Holocron
         "current_request" => interaction[:current_request]
       }
       facts["semantic_similarity"] = interaction[:semantic_similarity].round(4) if interaction[:semantic_similarity]
+      facts["lexical_score"] = interaction[:lexical_score].round(4) if interaction[:lexical_score]
+      facts["rrf_score"] = interaction[:rrf_score].round(6) if interaction[:rrf_score]
+      facts["matched_unit_type"] = interaction[:matched_unit_type] if interaction[:matched_unit_type]
+      facts["retrieval_signals"] = interaction[:retrieval_signals] if interaction[:retrieval_signals]
       source(
         type: "interaction",
         id: interaction[:id],
         label: "#{humanize(interaction[:interaction_type])} with #{interaction[:person_name]}",
-        excerpt: facts["summary"],
+        excerpt: bounded(interaction[:matched_excerpt], 2_000) || facts["summary"],
         facts: facts
       )
     end

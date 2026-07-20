@@ -800,7 +800,7 @@ class HolocronAppTest < Minitest::Test
     assert_equal audit_count + 1, Holocron::Database.db[:audit_events].count
   end
 
-  def test_same_briefing_can_compare_linked_semantic_and_hybrid_generations
+  def test_same_briefing_can_compare_all_retrieval_generations
     briefing = create_briefing(isolated_request_overrides("retrieval-comparison"))
 
     post_json "/api/briefings/#{briefing.fetch('id')}/generate", {
@@ -822,6 +822,13 @@ class HolocronAppTest < Minitest::Test
       retrieval_strategy: "hybrid"
     }, actor_headers
     assert last_response.ok?, last_response.body
+    hybrid = parsed_response
+
+    post_json "/api/briefings/#{briefing.fetch('id')}/generate", {
+      expected_lock_version: hybrid.fetch("lock_version"),
+      retrieval_strategy: "fused"
+    }, actor_headers
+    assert last_response.ok?, last_response.body
     compared = parsed_response
 
     linked_version = compared.fetch("versions").find do |version|
@@ -833,9 +840,13 @@ class HolocronAppTest < Minitest::Test
     hybrid_version = compared.fetch("versions").find do |version|
       version.dig("generation", "retrieval_strategy") == "hybrid"
     end
+    fused_version = compared.fetch("versions").find do |version|
+      version.dig("generation", "retrieval_strategy") == "fused"
+    end
     refute_nil linked_version
     refute_nil semantic_version
     refute_nil hybrid_version
+    refute_nil fused_version
     assert_operator linked_version.dig("generation", "input_tokens"), :>, 0
     assert_operator semantic_version.dig("generation", "input_tokens"), :>, 0
     assert_equal "postgres_array_local", semantic_version.dig("generation", "retrieval", "vector_backend")
@@ -849,6 +860,12 @@ class HolocronAppTest < Minitest::Test
     end
     assert_equal cited_items, hybrid_version.dig("generation", "cited_claim_count")
     assert_equal "AI-generated draft using attendee-balanced hybrid retrieval.", hybrid_version.fetch("change_summary")
+    assert_equal "fused", fused_version.dig("generation", "retrieval", "strategy")
+    assert_equal true, fused_version.dig("generation", "retrieval", "fusion_enabled")
+    assert_equal "reciprocal_rank_fusion", fused_version.dig("generation", "retrieval", "fusion_method")
+    assert_equal 60, fused_version.dig("generation", "retrieval", "rrf_k")
+    assert_operator fused_version.dig("generation", "retrieval", "semantic_overview_records"), :>, 0
+    assert_equal "AI-generated draft using fused lexical, semantic, attendee, and recency retrieval.", fused_version.fetch("change_summary")
     hybrid_context = hybrid_version.fetch("sections").find { |section| section.fetch("section_type") == "decision_context" }
     assert_operator hybrid_context.fetch("items").length, :<=, 4
 
@@ -1027,14 +1044,104 @@ class HolocronAppTest < Minitest::Test
     first = index.refresh_interactions!
     second = index.refresh_interactions!
 
-    assert_equal interaction_count, first.fetch(:indexed_records)
-    assert_equal interaction_count, first.fetch(:refreshed_records)
+    assert_equal interaction_count, first.fetch(:indexed_interactions)
+    assert_equal interaction_count, first.fetch(:overview_records)
+    assert_operator first.fetch(:indexed_records), :>=, interaction_count
+    assert_equal first.fetch(:indexed_records), first.fetch(:refreshed_records)
     assert_operator first.fetch(:embedding_tokens), :>, 0
-    assert_equal interaction_count, db[:semantic_documents].where(workspace_id: workspace.fetch(:id)).count
+    assert_equal first.fetch(:indexed_records), db[:semantic_documents].where(workspace_id: workspace.fetch(:id)).count
     assert_equal 0, second.fetch(:refreshed_records)
     assert_equal 0, second.fetch(:embedding_tokens)
   ensure
     ENV["SEMANTIC_EMBEDDING_BATCH_SIZE"] = previous_batch_size
+  end
+
+  def test_semantic_index_creates_only_high_signal_child_bursts_and_is_idempotent
+    db = Holocron::Database.db
+    workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
+    person = db[:people].where(workspace_id: workspace.fetch(:id)).first
+    actor = db[:workspace_members].where(workspace_id: workspace.fetch(:id)).first
+    now = Time.now.utc
+    interaction_id = SecureRandom.uuid
+    summary = [
+      "The Project Harborlight working session reviewed cooling access and public communications across the west side.",
+      "Jordan objected to publishing three sites because accessible entrances and backup-power agreements remain unconfirmed.",
+      "Jordan committed to deliver checklist HL-27 and translated outreach copy by August 12.",
+      "The group agreed that Sam Rivera will own the final launch decision after Public Health confirms Protocol CG-HEAT-4.",
+      "Everyone thanked the facilities team for attending."
+    ].join(" ")
+    db[:interactions].insert(
+      id: interaction_id,
+      workspace_id: workspace.fetch(:id),
+      person_id: person.fetch(:id),
+      authored_by_workspace_member_id: actor.fetch(:id),
+      interaction_type: "meeting",
+      summary: summary,
+      source_type: "manual",
+      occurred_at: now,
+      created_at: now,
+      updated_at: now
+    )
+
+    index = Holocron::SemanticIndex.new(workspace: workspace)
+    first = index.refresh_interactions!
+    documents = db[:semantic_documents]
+      .where(workspace_id: workspace.fetch(:id), source_id: interaction_id)
+      .order(:position)
+      .all
+    second = index.refresh_interactions!
+
+    assert_equal "overview", documents.first.fetch(:unit_type)
+    bursts = documents.select { |document| document.fetch(:unit_type) == "burst" }
+    assert_operator bursts.length, :>=, 3
+    assert bursts.any? { |document| JSON.parse(document.fetch(:metadata_json)).fetch("signal_kind") == "commitment" }
+    assert bursts.none? { |document| document.fetch(:content).include?("thanked the facilities team") }
+    assert_operator first.fetch(:burst_records), :>=, bursts.length
+    assert_equal 0, second.fetch(:refreshed_records)
+  end
+
+  def test_fused_retrieval_combines_rankers_and_collapses_bursts_to_one_interaction
+    db = Holocron::Database.db
+    workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
+    person = db[:people].where(workspace_id: workspace.fetch(:id)).first
+    actor = db[:workspace_members].where(workspace_id: workspace.fetch(:id)).first
+    now = Time.now.utc
+    interaction_id = SecureRandom.uuid
+    db[:interactions].insert(
+      id: interaction_id,
+      workspace_id: workspace.fetch(:id),
+      person_id: person.fetch(:id),
+      authored_by_workspace_member_id: actor.fetch(:id),
+      interaction_type: "meeting",
+      summary: "Staff reviewed general summer readiness and neighborhood communications. Public Health recommended Protocol CG-HEAT-4 for overnight heat activation. Jordan objected to using the January threshold because that guidance is stale. Priya committed to send the signed protocol and risk table by August 14. The group agreed Sam Rivera will own the final activation decision after Transit confirms no-fare service.",
+      source_type: "manual",
+      occurred_at: now + 60,
+      created_at: now,
+      updated_at: now
+    )
+
+    result = Holocron::SemanticIndex.new(workspace: workspace).search_interactions(
+      query: "CG-HEAT-4 signed protocol risk table August 14",
+      limit: 10,
+      balanced_person_ids: [person.fetch(:id)],
+      fused: true
+    )
+    matches = result.fetch(:interactions).select { |interaction| interaction.fetch(:id) == interaction_id }
+
+    assert_equal 1, matches.length
+    match = matches.first
+    rankers = match.fetch(:retrieval_signals).map { |signal| signal.fetch("ranker") }
+    assert_includes rankers, "vector"
+    assert_includes rankers, "lexical"
+    assert_includes rankers, "attendee"
+    assert_includes rankers, "recency"
+    assert_equal "burst", match.fetch(:matched_unit_type)
+    assert_match(/August 14/, match.fetch(:matched_excerpt))
+    expected_rrf = match.fetch(:retrieval_signals).sum do |signal|
+      1.0 / (Holocron::SemanticIndex::RRF_K + signal.fetch("rank"))
+    end
+    assert_in_delta expected_rrf, match.fetch(:rrf_score), 0.000_000_1
+    assert_equal true, result.fetch(:fusion_enabled)
   end
 
   def test_grounded_generation_derives_a_cited_meeting_snapshot_from_linked_records

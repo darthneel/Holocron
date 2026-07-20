@@ -121,13 +121,18 @@ It does not change `.env.local`, request extraction, or semantic embeddings. Sto
 the server after the test and start it normally to return to the configured briefing
 model.
 
-Briefings support three retrieval strategies. `linked_recency` follows explicit
+Briefings support four retrieval strategies. `linked_recency` follows explicit
 request-person relationships and recent interaction limits. `semantic` preserves
 the same essential linked facts, then ranks prior interactions inside the current
 workspace by embedding similarity. `hybrid` reserves relevant prior history across
 the meeting attendees, fills the remaining interaction budget with the strongest
 workspace-wide semantic matches, and gives each generated section its own evidence
-boundary. Neon creates a pgvector HNSW index; local
+boundary. `fused` combines vector, PostgreSQL full-text, attendee-scoped, and
+candidate-recency rankings with reciprocal-rank fusion. Long, information-dense
+interactions also receive deterministic high-signal child documents for decisions,
+commitments, concerns, and requests. Child matches collapse back to one
+authoritative interaction before context limits are applied, so verbose records do
+not consume multiple evidence slots. Neon creates a pgvector HNSW index; local
 PostgreSQL installations without pgvector use an array-backed development
 fallback with the same workspace filter and deterministic fake embeddings.
 Generated versions retain retrieval metadata and model usage so reviewers can
@@ -144,11 +149,32 @@ bin/backfill-semantic-index
 ```
 
 The command is idempotent: it embeds only missing records, changed content, or
-records stored with a different embedding model. Set `WORKSPACE_SLUG=slug` to
+records stored with a different embedding model, and removes obsolete child
+documents after an interaction changes. Set `WORKSPACE_SLUG=slug` to
 backfill one workspace. For local demonstration data only, set
 `ALLOW_FAKE_EMBEDDING_BACKFILL=1`; production backfills refuse the fake provider
 by default. Requests are sent in batches controlled by
 `SEMANTIC_EMBEDDING_BATCH_SIZE` (default `100`).
+
+## Retrieval Comparison Scenario
+
+The deterministic resilience scenario contains attendee-heavy history,
+workspace distractors, superseded guidance, exact identifiers, deadlines, and
+long interactions with high-signal passages. Seed it after normal database setup:
+
+```bash
+cd backend
+bundle exec rake db:migrate
+bundle exec ruby script/seed_resilience_e2e_scenario.rb
+bin/backfill-semantic-index
+```
+
+Open the printed briefing ID and generate `linked_recency`, `semantic`, and
+`hybrid` versions as controls, followed by `fused`. The comparison keeps the
+latest immutable version for each strategy and supports a useful-cited-claims
+rating. Keep the briefing, generation model, and prompt version fixed while
+comparing required evidence, distractors, stale evidence, attendee coverage,
+input tokens, and citation usefulness.
 
 ## Live Request Extraction Evals
 

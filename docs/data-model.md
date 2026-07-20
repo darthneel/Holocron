@@ -193,6 +193,24 @@ erDiagram
         timestamptz updated_at
     }
 
+    SEMANTIC_DOCUMENTS {
+        uuid id PK
+        uuid workspace_id FK
+        text source_type
+        uuid source_id "interaction ID"
+        text unit_type "overview or burst"
+        text unit_key
+        integer position "nullable"
+        text content
+        text metadata_json "serialized JSON"
+        text content_hash
+        text embedding_model
+        vector embedding
+        tsvector search_vector
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
     SCHEDULING_REQUEST_PEOPLE {
         uuid scheduling_request_id PK,FK
         uuid person_id PK,FK
@@ -237,6 +255,12 @@ erDiagram
         text review_notes "nullable"
         uuid reviewed_by_workspace_member_id FK "nullable"
         timestamptz reviewed_at "nullable"
+        text retrieval_strategy "nullable"
+        text retrieval_json "serialized JSON, nullable"
+        text generation_provider "nullable"
+        text generation_model "nullable"
+        integer input_tokens "nullable"
+        integer output_tokens "nullable"
         timestamptz created_at
     }
 
@@ -273,6 +297,8 @@ erDiagram
     WORKSPACES ||--o{ ORGANIZATIONS : owns
     ORGANIZATIONS o|--o{ PEOPLE : groups
     PEOPLE ||--o{ INTERACTIONS : concerns
+    INTERACTIONS ||--o{ SEMANTIC_DOCUMENTS : indexed_as
+    WORKSPACES ||--o{ SEMANTIC_DOCUMENTS : scopes
     WORKSPACE_MEMBERS ||--o{ INTERACTIONS : authors
     SCHEDULING_REQUESTS o|--o{ INTERACTIONS : sources
     SCHEDULING_REQUESTS ||--o{ SCHEDULING_REQUEST_PEOPLE : links
@@ -312,3 +338,12 @@ fails. Validation errors and warnings remain separate so incomplete but valid
 proposals can be reviewed. `scheduling_request_id` and `accepted_at` are both null
 until acceptance, then both are set in the scheduling-request transaction. The
 unique request link ensures one extraction cannot create multiple requests.
+
+Semantic documents are a derived, replaceable index rather than authoritative
+domain records. Every interaction has one `overview` unit. Long interactions may
+also have selected `burst` units containing independently retrievable decisions,
+commitments, concerns, or requests. The composite source/unit key permits multiple
+index rows per interaction. Retrieval ranks documents, then collapses them by
+`interactions.id` before assigning briefing source references; citations therefore
+continue to identify the authoritative interaction even when a child burst supplied
+the matching excerpt.
