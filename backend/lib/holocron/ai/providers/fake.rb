@@ -103,7 +103,9 @@ module Holocron
               fake_item("Constraint", interaction_text(risk_evidence), allowed_refs.call("risks", [risk_evidence]))
             ] : []),
             fake_section("open_questions", "Open questions", [
-              fake_item("Ownership", "Who will own each follow-up after the meeting?", [])
+              fake_item("Ownership", "Who will own each follow-up after the meeting?", []),
+              fake_item("Readiness", "What remains unconfirmed for the requested decisions?", []),
+              fake_item("Decision authority", "Are the people needed to make each requested commitment attending?", [])
             ])
           ]
 

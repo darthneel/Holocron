@@ -7,7 +7,7 @@ require_relative "semantic_index"
 
 module Holocron
   class BriefingContextAssembler
-    CONTEXT_VERSION = "briefing-context-v7"
+    CONTEXT_VERSION = "briefing-context-v9"
     RETRIEVAL_STRATEGIES = %w[linked_recency semantic hybrid fused].freeze
     MAX_PEOPLE = 12
     MAX_CURRENT_INTERACTIONS_PER_PERSON = 2
@@ -15,8 +15,20 @@ module Holocron
     MAX_INTERACTIONS = 15
     FUSED_MIN_INTERACTIONS = 10
     FUSED_MAX_INTERACTIONS = 12
+    MAX_PROTECTED_DECISION_FACTS = 10
+    MAX_PROTECTED_DECISION_FACTS_PER_INTERACTION = 2
+    MAX_PROTECTED_DECISION_FACT_CHARACTERS = 1_800
+    MAX_PROTECTED_DECISION_FACT_LENGTH = 320
     MAX_CONTEXT_CHARACTERS = 60_000
     ROLE_RANK = {"requester" => 0, "required" => 1, "optional" => 2, "staff" => 3}.freeze
+    DECISION_FACT_PATTERNS = {
+      "identifier" => /\b(?:[A-Z]{2,}(?:-[A-Z0-9]+)+|[A-Z]{2,}\s*\d{2,}|[A-Za-z]+[._-]v?\d+)\b/,
+      "date_or_deadline" => /\b(?:deadline|due)\b|\b(?:by|before)\s+(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}|(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day|\d{4}-\d{2}-\d{2}|tomorrow|next week|(?:the\s+)?(?:end|close|start)\s+of)\b|\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}\b|\b\d{4}-\d{2}-\d{2}\b/i,
+      "threshold" => /\b(?:threshold|trigger|activat(?:e|es|ed|ion)|above|below|at least|no more than|consecutive)\b.*\b\d|\b\d+(?:\.\d+)?\s*(?:degrees?|%|percent|hours?|minutes?|days?|nights?)\b/i,
+      "ownership" => /\b(?:assign(?:ed)?|owner|owns?|responsible|accountable|lead|submit|submission)\b/i,
+      "commitment" => /\b(?:agreed|approved|committed|will|deliver|send|complete|provide|publish)\b/i,
+      "blocker" => /\b(?:stale|unresolved|pending|blocked|object(?:ed|ion)?|concern(?:ed)?|lack(?:s|ed)?|requires?|only if|unless|risk|constraint|dependency|dependencies)\b/i
+    }.freeze
 
     class NotFoundError < StandardError; end
 
@@ -64,9 +76,13 @@ module Holocron
       essential_sources.concat(people.map { |person| person_source(person) })
       essential_sources.concat(organizations.map { |organization| organization_source(organization) })
 
+      protected_facts = @strategy == "fused" ? protected_decision_facts(interactions) : {}
       selected_sources = essential_sources
       interactions.each do |interaction|
-        candidate = interaction_source(interaction)
+        candidate = interaction_source(
+          interaction,
+          protected_facts: protected_facts.fetch(interaction[:id], [])
+        )
         candidate_sources = selected_sources + [candidate]
         break if serialized_size(candidate_sources) > MAX_CONTEXT_CHARACTERS
 
@@ -112,6 +128,15 @@ module Holocron
           "source_count" => sources.length
         }.merge(strategy_metadata)
       }
+      protected_fact_count = sources.sum do |source|
+        Array(source.dig("facts", "decision_facts")).length
+      end
+      protected_fact_characters = sources.sum do |source|
+        Array(source.dig("facts", "decision_facts")).sum { |fact| fact.fetch("text", "").length }
+      end
+      manifest["retrieval"]["protected_decision_facts"] = protected_fact_count
+      manifest["retrieval"]["protected_decision_fact_characters"] = protected_fact_characters
+      manifest["retrieval"]["protected_decision_fact_character_budget"] = @strategy == "fused" ? MAX_PROTECTED_DECISION_FACT_CHARACTERS : nil
       manifest["section_source_refs"] = section_source_refs(sources)
       manifest["retrieval"]["section_evidence_counts"] = manifest["section_source_refs"]
         .transform_values(&:length)
@@ -120,7 +145,8 @@ module Holocron
         {
           "context_version" => manifest["context_version"],
           "workspace_timezone" => manifest["workspace_timezone"],
-          "sources" => manifest["sources"],
+          "sources" => compact_model_sources(manifest["sources"]),
+          "section_source_refs" => manifest["section_source_refs"],
           "limitations" => manifest["limitations"]
         }
       ).length
@@ -323,6 +349,83 @@ module Holocron
       spans.empty? ? interaction[:summary].to_s : spans.join(" ")
     end
 
+    def protected_decision_facts(interactions)
+      candidates = interactions.each_with_index.flat_map do |interaction, interaction_rank|
+        existing_spans = Array(interaction[:matched_evidence_spans]).filter_map { |span| span["text"] }
+        decision_fact_segments(interaction[:summary]).each_with_index.filter_map do |text, segment_rank|
+          kinds = decision_fact_kinds(text)
+          next if kinds.empty? || duplicate_fact?(text, existing_spans)
+
+          {
+            interaction_id: interaction[:id],
+            interaction_rank: interaction_rank,
+            segment_rank: segment_rank,
+            score: decision_fact_score(text, kinds),
+            fact: {"kinds" => kinds, "text" => bounded(text, MAX_PROTECTED_DECISION_FACT_LENGTH)}
+          }
+        end
+      end
+
+      selected = Hash.new { |hash, key| hash[key] = [] }
+      selected_count = 0
+      selected_characters = 0
+      candidates.sort_by do |candidate|
+        [-candidate.fetch(:score), candidate.fetch(:interaction_rank), candidate.fetch(:segment_rank)]
+      end.each do |candidate|
+        break if selected_count >= MAX_PROTECTED_DECISION_FACTS
+
+        interaction_facts = selected[candidate.fetch(:interaction_id)]
+        next if interaction_facts.length >= MAX_PROTECTED_DECISION_FACTS_PER_INTERACTION
+
+        fact = candidate.fetch(:fact)
+        next if duplicate_fact?(fact.fetch("text"), interaction_facts.map { |item| item.fetch("text") })
+        next if selected_characters + fact.fetch("text").length > MAX_PROTECTED_DECISION_FACT_CHARACTERS
+
+        interaction_facts << fact
+        selected_count += 1
+        selected_characters += fact.fetch("text").length
+      end
+      selected
+    end
+
+    def decision_fact_segments(summary)
+      summary.to_s
+        .split(/\n{2,}|(?<=[.!?])\s+(?=[A-Z0-9])/)
+        .map(&:strip)
+        .reject { |segment| segment.empty? || segment.length < 25 }
+    end
+
+    def decision_fact_kinds(text)
+      DECISION_FACT_PATTERNS.filter_map { |kind, pattern| kind if text.match?(pattern) }
+    end
+
+    def decision_fact_score(text, kinds)
+      score = kinds.length * 10
+      score += 8 if kinds.include?("identifier")
+      score += 7 if kinds.include?("date_or_deadline")
+      score += 7 if kinds.include?("threshold")
+      score += 5 if kinds.include?("ownership")
+      score += 3 if kinds.include?("blocker")
+      score += 2 if text.match?(/\b\d+(?:\.\d+)?\b/)
+      score
+    end
+
+    def duplicate_fact?(text, existing_texts)
+      normalized = normalized_fact_tokens(text)
+      existing_texts.any? do |existing|
+        other = normalized_fact_tokens(existing)
+        next false if normalized.empty? || other.empty?
+        next true if normalized == other || (normalized - other).empty? || (other - normalized).empty?
+
+        union = normalized | other
+        union.any? && ((normalized & other).length.to_f / union.length) >= 0.78
+      end
+    end
+
+    def normalized_fact_tokens(text)
+      text.to_s.downcase.scan(/[a-z0-9]+/)
+    end
+
     def current_request_interactions(request_id, people)
       people.flat_map do |person|
         @db[:interactions]
@@ -462,7 +565,7 @@ module Holocron
       )
     end
 
-    def interaction_source(interaction)
+    def interaction_source(interaction, protected_facts: [])
       evidence_spans = Array(interaction[:matched_evidence_spans]).filter_map do |span|
         text = bounded(span["text"], 1_000)
         next unless text
@@ -480,8 +583,11 @@ module Holocron
       else
         facts["summary"] = bounded(interaction[:summary], 2_000)
       end
-      excerpt = if evidence_spans.any?
-        evidence_spans.map { |span| span.fetch("text") }.join(" • ")
+      facts["decision_facts"] = protected_facts if protected_facts.any?
+      excerpt = if evidence_spans.any? || protected_facts.any?
+        (protected_facts.map { |fact| fact.fetch("text") } + evidence_spans.map { |span| span.fetch("text") })
+          .uniq
+          .join(" • ")
       else
         facts["summary"]
       end
@@ -511,6 +617,10 @@ module Holocron
         rendered = value.is_a?(Array) ? JSON.generate(value) : value.to_s
         "#{humanize(key)}: #{rendered}"
       end.join(" | ")
+    end
+
+    def compact_model_sources(sources)
+      sources.map { |source| source.reject { |key, _value| key == "source_excerpt" } }
     end
 
     def serialized_size(sources)

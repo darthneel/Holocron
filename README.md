@@ -133,10 +133,18 @@ interactions also receive deterministic high-signal child documents for decision
 commitments, concerns, and requests. Child matches collapse back to one
 authoritative interaction before context limits are applied, so verbose records do
 not consume multiple evidence slots. The model receives up to three relevant spans
-from a matched parent, while retrieval diagnostics remain in version audits rather
-than consuming generation tokens. Fused selection preserves attendee coverage and
+from a matched parent. A separate decision-grade fact pass protects a globally bounded
+set of exact owners, identifiers, dates, thresholds, commitments, and blockers from
+being lost when the matched spans are compacted; facts already present in matched spans
+are deduplicated. Source excerpts stay available for citation audits but are omitted
+from the model payload because their structured facts contain the same text. Retrieval
+diagnostics likewise remain in version audits rather than consuming generation tokens;
+the compact section-to-source boundary map remains model-visible so generated citations
+can pass the same grounding rules enforced by the application. Fused selection preserves attendee coverage and
 chooses a diverse 10–12 total interactions instead of always filling the 15-record
 ceiling. Lexical candidates emphasize identifiers, names, and rare corpus terms.
+Open questions reserve three to four compact slots and prioritize uncovered agenda
+decisions and missing decision authority before secondary opportunities from history.
 Neon creates a pgvector HNSW index; local
 PostgreSQL installations without pgvector use an array-backed development
 fallback with the same workspace filter and deterministic fake embeddings.

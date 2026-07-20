@@ -5,7 +5,7 @@ require_relative "ai/model_router"
 
 module Holocron
   module BriefingGeneration
-    PROMPT_VERSION = "action-briefing-v3"
+    PROMPT_VERSION = "action-briefing-v4"
     SECTION_DEFINITIONS = {
       "meeting_snapshot" => "Meeting snapshot",
       "meeting_ask" => "Why this meeting",
@@ -22,7 +22,7 @@ module Holocron
       "decision_context" => 0..4,
       "talking_points" => 2..5,
       "risks" => 0..4,
-      "open_questions" => 0..4
+      "open_questions" => 3..4
     }.freeze
     SECTION_SOURCE_TYPES = {
       "meeting_ask" => %w[scheduling_request interaction],
@@ -107,9 +107,10 @@ module Holocron
           Return exactly one section for each required section_type. Do not produce meeting_snapshot;
           the system creates it from verified meeting records. Each section contains compact items,
           not paragraphs. Keep each item to one or two sentences and attach at most three source_refs
-          that directly support that individual item. Use only source_refs present in the supplied
-          sources. Current-request interactions may support asks and recommendations but never prior
-          decision context. Do not repeat the same fact in multiple sections.
+          that directly support that individual item. Use only source_refs listed for that section in
+          section_source_refs; this is the authoritative citation boundary. Current-request interactions
+          may support asks and recommendations but never prior decision context. Do not repeat the same
+          fact in multiple sections.
 
           meeting_ask (1-2 items): state the concrete reason for the meeting and the ask.
           desired_outcomes (2-4 items): describe specific decisions, commitments, owners, or next steps to seek.
@@ -117,12 +118,21 @@ module Holocron
           this meeting; group recurring history into themes instead of listing events chronologically.
           talking_points (2-5 items): give usable language or questions, tailored to the supplied evidence.
           risks (0-4 items): surface constraints, sensitivities, disagreements, or dependencies; do not invent risk.
-          open_questions (0-4 items): identify information that should be confirmed before or during the meeting.
+          open_questions (3-4 items): identify information that should be confirmed before or during the meeting.
+          Before choosing these questions, compare every decision area explicitly requested in the scheduling
+          request with the supplied evidence and attendee roster. Prioritize: (1) requested decisions that still
+          lack a confirmed location, owner, readiness standard, or commitment; (2) missing stakeholder attendance
+          or decision authority needed to close those decisions; (3) unresolved operational status or promised
+          deliverables; and only then (4) secondary opportunities from prior history. Use the fourth question when
+          any requested decision or necessary decision-maker remains uncovered. Do not let a secondary historical
+          opportunity displace an explicit agenda or attendance gap.
 
           Recommendations must be framed as recommendations, not established facts. A factual item
           requires a citation. An open question may have no citation when it explicitly identifies
-          missing information. Current-request interactions describe intake and may not be used as
-          prior decision context. Return only the required structured output.
+          missing information. Interaction decision_facts are a protected, high-value evidence set:
+          preserve their exact owners, identifiers, dates, thresholds, commitments, and blockers when
+          relevant instead of replacing them with vague summaries. Current-request interactions describe
+          intake and may not be used as prior decision context. Return only the required structured output.
         PROMPT
         input: JSON.pretty_generate(model_manifest(manifest))
       }
@@ -132,7 +142,10 @@ module Holocron
       {
         "context_version" => manifest["context_version"],
         "workspace_timezone" => manifest["workspace_timezone"],
-        "sources" => manifest.fetch("sources", []),
+        "sources" => manifest.fetch("sources", []).map do |source|
+          source.reject { |key, _value| key == "source_excerpt" }
+        end,
+        "section_source_refs" => manifest.fetch("section_source_refs", {}),
         "limitations" => manifest.fetch("limitations", [])
       }
     end

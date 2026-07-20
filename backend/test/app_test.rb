@@ -794,7 +794,7 @@ class HolocronAppTest < Minitest::Test
     refute_nil audit
     payload = JSON.parse(audit.fetch(:payload))
     assert_equal "fake", payload.fetch("provider")
-    assert_equal "action-briefing-v3", payload.fetch("prompt_version")
+    assert_equal "action-briefing-v4", payload.fetch("prompt_version")
     assert_equal 2, payload.fetch("version_number")
     assert_operator payload.dig("retrieval", "source_count"), :>=, 4
     assert_equal audit_count + 1, Holocron::Database.db[:audit_events].count
@@ -1173,13 +1173,71 @@ class HolocronAppTest < Minitest::Test
     assert_equal true, manifest.dig("retrieval", "adaptive_selection_enabled")
     assert_operator manifest.dig("retrieval", "context_characters"), :<, manifest.dig("retrieval", "audit_context_characters")
     refute model_manifest.key?("retrieval")
-    refute model_manifest.key?("section_source_refs")
+    assert_equal manifest.fetch("section_source_refs"), model_manifest.fetch("section_source_refs")
+    assert model_manifest.fetch("sources").none? { |source| source.key?("source_excerpt") }
+    assert manifest.fetch("sources").all? { |source| source.key?("source_excerpt") }
     interaction_sources.each do |source|
       facts = source.fetch("facts")
       refute facts.key?("semantic_similarity")
       refute facts.key?("lexical_score")
       refute facts.key?("rrf_score")
       refute facts.key?("retrieval_signals")
+    end
+  end
+
+  def test_fused_context_protects_decision_grade_facts_omitted_by_matched_bursts
+    db = Holocron::Database.db
+    workspace = db[:workspaces].first
+    assembler = Holocron::BriefingContextAssembler.new(workspace: workspace, strategy: "fused")
+    interactions = [{
+      id: "decision-grade-interaction",
+      summary: [
+        "Staff reviewed general summer readiness and neighborhood communications.",
+        "Nadia recommended Protocol CG-HEAT-4, which activates outreach above 75 degrees for two consecutive nights.",
+        "The state grant application is due August 19, and Sam assigned Priya Shah to compile accessibility estimates before August 15.",
+        "The remaining question is whether Transit can guarantee no-fare service within thirty minutes of activation.",
+        "Jordan objected to the January guidance because it is stale."
+      ].join(" "),
+      matched_evidence_spans: [{
+        "kind" => "request",
+        "text" => "The remaining question is whether Transit can guarantee no-fare service within thirty minutes of activation."
+      }]
+    }]
+
+    protected = assembler.send(:protected_decision_facts, interactions)
+    facts = protected.fetch("decision-grade-interaction")
+    text = facts.map { |fact| fact.fetch("text") }.join(" ")
+
+    assert_operator facts.length, :<=, Holocron::BriefingContextAssembler::MAX_PROTECTED_DECISION_FACTS_PER_INTERACTION
+    assert_match(/CG-HEAT-4/, text)
+    assert_match(/August 19/, text)
+    assert_match(/Priya Shah/, text)
+    refute_match(/general summer readiness/, text)
+    refute_match(/remaining question/, text)
+    assert facts.any? { |fact| fact.fetch("kinds").include?("threshold") }
+    assert facts.any? { |fact| fact.fetch("kinds").include?("ownership") }
+  end
+
+  def test_protected_decision_facts_enforce_global_count_and_character_budgets
+    db = Holocron::Database.db
+    workspace = db[:workspaces].first
+    assembler = Holocron::BriefingContextAssembler.new(workspace: workspace, strategy: "fused")
+    interactions = 20.times.map do |index|
+      {
+        id: "bounded-decision-fact-#{index}",
+        summary: "Owner #{index} committed to deliver Protocol PLAN-#{100 + index} by August #{index + 1}; the unresolved dependency requires #{index + 10} hours of review.",
+        matched_evidence_spans: []
+      }
+    end
+
+    protected = assembler.send(:protected_decision_facts, interactions)
+    facts = protected.values.flatten
+
+    assert_operator facts.length, :<=, Holocron::BriefingContextAssembler::MAX_PROTECTED_DECISION_FACTS
+    assert_operator facts.sum { |fact| fact.fetch("text").length }, :<=,
+      Holocron::BriefingContextAssembler::MAX_PROTECTED_DECISION_FACT_CHARACTERS
+    assert protected.values.all? do |interaction_facts|
+      interaction_facts.length <= Holocron::BriefingContextAssembler::MAX_PROTECTED_DECISION_FACTS_PER_INTERACTION
     end
   end
 
@@ -1215,6 +1273,21 @@ class HolocronAppTest < Minitest::Test
       .dig("properties", "sections", "items", "properties", "items", "items", "properties", "source_refs")
 
     refute source_refs.key?("uniqueItems")
+  end
+
+  def test_briefing_prompt_prioritizes_agenda_and_attendance_gaps_in_open_questions
+    prompt = Holocron::BriefingGeneration.prompt({
+      "context_version" => "test-context",
+      "workspace_timezone" => "UTC",
+      "sources" => [],
+      "section_source_refs" => {},
+      "limitations" => []
+    })
+
+    assert_equal 3..4, Holocron::BriefingGeneration::SECTION_ITEM_LIMITS.fetch("open_questions")
+    assert_match(/every decision area explicitly requested/, prompt.fetch(:instructions))
+    assert_match(/missing stakeholder attendance/, prompt.fetch(:instructions))
+    assert_match(/Do not let a secondary historical\s+opportunity displace/, prompt.fetch(:instructions))
   end
 
   def test_grounded_generation_caps_prior_interactions_per_person
@@ -1268,7 +1341,13 @@ class HolocronAppTest < Minitest::Test
         {
           output: {
             "sections" => section_types.map do |section_type|
-              count = %w[desired_outcomes talking_points].include?(section_type) ? 2 : 1
+              count = if %w[desired_outcomes talking_points].include?(section_type)
+                2
+              elsif section_type == "open_questions"
+                3
+              else
+                1
+              end
               {
                 "section_type" => section_type,
                 "title" => section_type,
@@ -1322,7 +1401,13 @@ class HolocronAppTest < Minitest::Test
     output = {
       "sections" => Holocron::BriefingGeneration::MODEL_SECTION_TYPES.map do |section_type|
         current_context = section_type == "decision_context"
-        count = %w[desired_outcomes talking_points].include?(section_type) ? 2 : 1
+        count = if %w[desired_outcomes talking_points].include?(section_type)
+          2
+        elsif section_type == "open_questions"
+          3
+        else
+          1
+        end
         fallback_ref = manifest.dig("section_source_refs", section_type)&.first
         {
           "section_type" => section_type,
