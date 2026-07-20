@@ -238,7 +238,7 @@ class HolocronAppTest < Minitest::Test
     assert_includes warnings, "Skipped an extracted participant without a name; confirm attendees manually."
   end
 
-  def test_extraction_enriches_known_workspace_members_with_office_organization
+  def test_extraction_enriches_participants_only_when_their_email_matches_the_workspace_directory
     workspace = Holocron::Database.db[:workspaces].where(slug: "cedar-grove-mayor").first
     output = {
       "requester" => {"name" => "Darius Holt", "email" => "dholt@cedargrovechamber.org", "organization" => nil},
@@ -258,8 +258,8 @@ class HolocronAppTest < Minitest::Test
 
     assert_empty errors
     assert_equal "Cedar Grove Mayor's Office", normalized.dig("participants", 0, "organization")
-    assert_equal "Cedar Grove Mayor's Office", normalized.dig("participants", 1, "organization")
-    assert_equal "sam.rivera@cedargrove.gov", normalized.dig("participants", 1, "email")
+    assert_nil normalized.dig("participants", 1, "organization")
+    assert_nil normalized.dig("participants", 1, "email")
   end
 
   def test_extraction_recovers_natural_language_mountain_time_candidate_windows

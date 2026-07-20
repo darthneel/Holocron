@@ -1926,7 +1926,7 @@ function RequestComposer({ form, extraction, formErrors, isSaving, isEditing, sc
 }) {
   return <form className="request-composer" onSubmit={onSave} noValidate>
     <div className="request-panel-head"><div><p className="eyebrow">{isEditing ? "Edit intake" : "New intake"}</p><h2>{isEditing ? "Update request" : "Create request"}</h2></div><button className="icon-button" type="button" onClick={onCancel} title="Close request editor"><X aria-hidden="true" /></button></div>
-    {extraction ? <div className="extraction-review-band"><Sparkles aria-hidden="true" /><div><strong>AI draft · Review before creating</strong><span>{extraction.provider} · {extraction.model} · {extraction.prompt_version}</span>{form.briefing_context.agenda_items.length > 0 ? <div className="extraction-warnings"><small>Briefing agenda captured</small>{form.briefing_context.agenda_items.map((item, index) => <small key={`${item.topic ?? "agenda"}-${index}`}><strong>{item.topic ?? `Agenda item ${index + 1}`}</strong>{item.ask ? ` · ${item.ask}` : item.decision_needed ? ` · ${item.decision_needed}` : ""}</small>)}</div> : null}{extraction.warnings.length > 0 ? <div className="extraction-warnings">{extraction.warnings.map((warning) => <small key={warning}>{warning}</small>)}</div> : null}</div></div> : null}
+    {extraction ? <aside className="extraction-review-band" aria-label="Extracted request review summary"><Sparkles aria-hidden="true" /><div className="extraction-review-content"><header className="extraction-review-header"><div><strong>AI draft</strong><span>Review before creating</span></div><small>{extraction.provider} · {extraction.model} · {extraction.prompt_version}</small></header>{form.briefing_context.agenda_items.length > 0 ? <section className="extraction-agenda"><h3>Briefing agenda</h3><ul>{form.briefing_context.agenda_items.map((item, index) => <li key={`${item.topic ?? "agenda"}-${index}`}><strong>{item.topic ?? `Agenda item ${index + 1}`}</strong>{item.ask || item.decision_needed ? <span>{item.ask ?? item.decision_needed}</span> : null}</li>)}</ul></section> : null}{extraction.warnings.length > 0 ? <section className="extraction-review-notices"><h3>Check before saving</h3><ul>{extraction.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section> : null}</div></aside> : null}
     {Object.keys(formErrors).length > 0 ? <p className="form-error form-error-summary" role="alert">{Object.values(formErrors).join(" ")}</p> : null}
     <fieldset className="request-fieldset"><legend>Requester</legend><div className="field-grid two"><Field label="Name" error={formErrors.requester_name}><input value={form.requester_name} onChange={(event) => onFieldChange("requester_name", event.target.value)} /></Field><Field label="Organization"><input value={form.requester_organization} onChange={(event) => onFieldChange("requester_organization", event.target.value)} /></Field><Field label="Email" error={formErrors.requester_email}><input type="email" value={form.requester_email} onChange={(event) => onFieldChange("requester_email", event.target.value)} /></Field><Field label="Source" error={formErrors.source_channel}><select value={form.source_channel} disabled={Boolean(extraction)} onChange={(event) => onFieldChange("source_channel", event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field></div></fieldset>
     <fieldset className="request-fieldset"><legend>Request</legend><div className="field-grid two"><Field label="Duration (minutes)" error={formErrors.requested_duration_minutes}><input type="number" min="15" max="480" step="15" value={form.requested_duration_minutes} onChange={(event) => onFieldChange("requested_duration_minutes", event.target.value)} /></Field><Field label="Assigned scheduler" error={formErrors.assigned_scheduler_member_id}><select value={form.assigned_scheduler_member_id} onChange={(event) => onFieldChange("assigned_scheduler_member_id", event.target.value)}>{schedulerMembers.map((member) => <option key={member.id} value={member.id}>{member.display_name} · {formatRole(member.role)}</option>)}</select></Field></div><Field label="Purpose" error={formErrors.purpose}><textarea rows={3} value={form.purpose} onChange={(event) => onFieldChange("purpose", event.target.value)} /></Field><Field label="Availability notes"><textarea rows={2} value={form.availability_notes} onChange={(event) => onFieldChange("availability_notes", event.target.value)} placeholder="Any useful context that does not fit a candidate window." /></Field><Field label="Original request text"><textarea rows={3} readOnly={Boolean(extraction)} value={form.original_request_text} onChange={(event) => onFieldChange("original_request_text", event.target.value)} /></Field></fieldset>
@@ -1954,6 +1954,7 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
   const [selectedTransition, setSelectedTransition] = useState<AvailableTransition | null>(null);
   const [reasonCode, setReasonCode] = useState("");
   const [notes, setNotes] = useState("");
+  const [expandedPersonHistory, setExpandedPersonHistory] = useState<Record<string, boolean>>({});
   const preferredWindow = request.candidate_windows.find((window) => window.starts_at && window.ends_at);
   const [meetingForm, setMeetingForm] = useState({
     title: request.purpose,
@@ -1961,6 +1962,42 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
     ends_at: datetimeLocalValue(preferredWindow?.ends_at ?? null),
     location: preferredWindow?.notes ?? "",
   });
+  const priorInteractions = request.relationship_context.interactions.filter((interaction) => !interaction.current_request);
+  const relationshipPeople = request.relationship_context.people;
+  const findRelationshipPerson = (name: string, email: string | null) => relationshipPeople.find((person) => (
+    (email && person.primary_email?.toLowerCase() === email.toLowerCase())
+    || person.display_name.toLowerCase() === name.toLowerCase()
+  )) ?? null;
+  const roster = [
+    {
+      key: "requester",
+      name: request.requester.name,
+      email: request.requester.email,
+      organization: request.requester.organization,
+      role: "Requester",
+      relationship: findRelationshipPerson(request.requester.name, request.requester.email),
+    },
+    ...request.participants.map((participant, index) => ({
+      key: participant.id || participant.email || `participant-${index}`,
+      name: participant.name,
+      email: participant.email || null,
+      organization: participant.organization || null,
+      role: formatRelationshipType(participant.role || "Participant"),
+      relationship: findRelationshipPerson(participant.name, participant.email || null),
+    })),
+  ];
+  const rosterRelationshipIds = new Set(roster.flatMap((person) => person.relationship ? [person.relationship.id] : []));
+  const peopleAndContext = [
+    ...roster,
+    ...relationshipPeople.filter((person) => !rosterRelationshipIds.has(person.id)).map((person) => ({
+      key: `related-${person.id}`,
+      name: person.display_name,
+      email: person.primary_email,
+      organization: person.organization?.name ?? null,
+      role: formatRelationshipType(person.request_role || "Related contact"),
+      relationship: person,
+    })),
+  ];
 
   function chooseTransition(transition: AvailableTransition) {
     setSelectedTransition(transition);
@@ -2075,33 +2112,36 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
         <div><span>Requester email</span><strong>{request.requester.email ?? "Not provided"}</strong></div>
       </div>
 
-      <section className="detail-block request-relationship-context">
-        <h3>Relationship context</h3>
-        <div className="context-people-list">
-          {request.relationship_context.people.map((person) => {
-            const organizationLabel = person.organization ? `${person.job_title ? `${person.job_title}, ` : ""}${person.organization.name}` : "No organization";
-            return <div className="context-person" key={`${person.id}-${person.request_role}`}>
-              <span className="member-initials">{initials(person.display_name)}</span>
-              <div><strong>{person.display_name}</strong><small>{formatRelationshipType(person.request_role ?? "related")} · {organizationLabel}</small></div>
-              <span>{person.interaction_count} {person.interaction_count === 1 ? "interaction" : "interactions"}</span>
-            </div>;
+      <section className="detail-block request-people-context">
+        <h3>People and context</h3>
+        <p className="people-context-intro">Meeting roles and relevant relationship history in one place.</p>
+        <div className="people-context-list">
+          {peopleAndContext.map((person) => {
+            const personHistory = person.relationship ? priorInteractions.filter((interaction) => interaction.person?.id === person.relationship?.id) : [];
+            const latestInteraction = personHistory[0] ?? null;
+            const isExpanded = Boolean(expandedPersonHistory[person.key]);
+            const identityDetails = [person.relationship?.job_title, person.organization || person.email || "No organization"].filter(Boolean).join(" · ");
+            return <article className="people-context-person" key={person.key}>
+              <div className="people-context-identity">
+                <span className="member-initials">{initials(person.name)}</span>
+                <div><strong>{person.name}</strong><small>{identityDetails}</small></div>
+                <span className="people-context-role">{person.role}</span>
+              </div>
+              <div className={`people-context-history ${latestInteraction ? "has-history" : "is-empty"}`}>
+                {latestInteraction ? <><strong>{latestInteraction.summary}</strong><small>{formatRelationshipType(latestInteraction.interaction_type)} · {latestInteraction.author?.display_name ?? "System"} · {formatDateTime(latestInteraction.occurred_at)}</small></> : person.relationship?.notes ? <p>{person.relationship.notes}</p> : <p>No prior interaction history.</p>}
+                {personHistory.length > 1 ? <button type="button" aria-expanded={isExpanded} onClick={() => setExpandedPersonHistory((current) => ({...current, [person.key]: !current[person.key]}))}>{isExpanded ? "Show less" : `View all ${personHistory.length} interactions`}</button> : null}
+                {isExpanded ? <div className="people-context-history-list">{personHistory.slice(1).map((interaction) => <div key={interaction.id}><strong>{interaction.summary}</strong><small>{formatRelationshipType(interaction.interaction_type)} · {formatDateTime(interaction.occurred_at)}</small></div>)}</div> : null}
+              </div>
+            </article>;
           })}
         </div>
-        {request.relationship_context.organizations.length > 0 ? <div className="context-organizations">{request.relationship_context.organizations.map((organization) => <span key={`${organization.id}-${organization.request_role}`}><Building2 aria-hidden="true" />{organization.name}</span>)}</div> : null}
-        <div className="context-history">
-          <strong>Prior history</strong>
-          {request.relationship_context.interactions.filter((interaction) => !interaction.current_request).length === 0 ? <p>No earlier interactions are recorded for these people or organizations.</p> : request.relationship_context.interactions.filter((interaction) => !interaction.current_request).slice(0, 5).map((interaction) => <div key={interaction.id}><MessageSquareText aria-hidden="true" /><span><strong>{interaction.summary}</strong><small>{formatRelationshipType(interaction.interaction_type)} · {interaction.author?.display_name ?? "System"} · {formatDateTime(interaction.occurred_at)}</small></span></div>)}
-        </div>
+        {request.relationship_context.organizations.some((organization) => organization.notes) ? <div className="people-organization-context"><strong>Organization context</strong>{request.relationship_context.organizations.filter((organization) => organization.notes).map((organization) => <p key={organization.id}><b>{organization.name}</b>{organization.notes}</p>)}</div> : null}
       </section>
 
       {request.availability_notes ? <section className="detail-block"><h3>Availability notes</h3><p>{request.availability_notes}</p></section> : null}
       <section className="detail-block">
         <h3>Candidate windows</h3>
         {request.candidate_windows.length === 0 ? <p>No structured candidate windows were supplied.</p> : <div className="detail-list">{request.candidate_windows.map((window) => <div key={`${window.candidate_date}-${window.starts_at ?? "notes"}`}><CalendarDays aria-hidden="true" /><span><strong>{window.candidate_date}</strong><small>{window.starts_at && window.ends_at ? `${formatDateTime(window.starts_at)} to ${formatDateTime(window.ends_at)}` : "Date preference"}{window.notes ? ` · ${window.notes}` : ""}</small></span></div>)}</div>}
-      </section>
-      <section className="detail-block">
-        <h3>Participants</h3>
-        {request.participants.length === 0 ? <p>No additional participants.</p> : <div className="detail-list">{request.participants.map((participant) => <div key={participant.id ?? participant.email}><UserRound aria-hidden="true" /><span><strong>{participant.name}</strong><small>{participant.role} · {participant.organization || participant.email || "No organization"}</small></span></div>)}</div>}
       </section>
       {request.original_request_text ? <section className="detail-block"><h3>Original request</h3><blockquote>{request.original_request_text}</blockquote></section> : null}
 

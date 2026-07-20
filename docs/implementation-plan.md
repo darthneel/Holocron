@@ -446,7 +446,7 @@ Completion gate met:
 
 ## Step 8: Durable Agent Execution
 
-**Status: Pending**
+**Status: Deferred**
 
 Move AI work into durable background execution.
 

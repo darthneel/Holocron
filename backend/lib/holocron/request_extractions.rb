@@ -514,21 +514,18 @@ module Holocron
       db = Database.db
       organizations = db[:organizations].where(workspace_id: workspace[:id]).all.to_h { |organization| [organization[:id], organization[:name]] }
       people = db[:people].where(workspace_id: workspace[:id]).all.map do |person|
-        {name: person[:display_name], email: person[:primary_email], organization: organizations[person[:organization_id]], internal: false}
+        {email: person[:primary_email], organization: organizations[person[:organization_id]]}
       end
       members = db[:workspace_members].where(workspace_id: workspace[:id], status: "active").all.map do |member|
-        {name: member[:display_name], email: member[:email], organization: workspace[:name], internal: true}
+        {email: member[:email], organization: workspace[:name]}
       end
-      directory = people + members
+      directory = (people + members).filter_map do |record|
+        email = record[:email].to_s.downcase
+        email.empty? ? nil : [email, record]
+      end.to_h
 
       participants.map do |participant|
-        match = participant["email"] && directory.find { |record| record[:email]&.casecmp?(participant["email"]) }
-        match ||= directory.find do |record|
-          next false unless record[:name]&.casecmp?(participant["name"])
-          next true if record[:internal] && participant["organization"].nil?
-
-          record[:organization]&.casecmp?(participant["organization"].to_s)
-        end
+        match = participant["email"] && directory[participant["email"].downcase]
         next participant unless match
 
         participant.merge(
