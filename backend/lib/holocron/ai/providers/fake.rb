@@ -68,11 +68,9 @@ module Holocron
           prior_interactions = sources.select do |source|
             source["source_type"] == "interaction" && !source.dig("facts", "current_request")
           end
-          section_source_refs = manifest.fetch("section_source_refs", {})
-          allowed_refs = lambda do |section_type, sources_to_cite|
-            allowed = section_source_refs.fetch(section_type, [])
+          allowed_refs = lambda do |_section_type, sources_to_cite|
             Array(sources_to_cite).filter_map { |source| source && source["source_ref"] }
-              .select { |ref| allowed.include?(ref) }.uniq.first(3)
+              .uniq.first(3)
           end
 
           purpose = request&.dig("facts", "purpose")
@@ -81,12 +79,12 @@ module Holocron
           context_items = prior_interactions.first(4).map do |interaction|
             fake_item(
               interaction.dig("facts", "person_name").to_s,
-              interaction.dig("facts", "summary"),
+              interaction_text(interaction),
               allowed_refs.call("decision_context", [interaction])
             )
           end
           risk_evidence = prior_interactions.find do |interaction|
-            interaction.dig("facts", "summary").to_s.match?(/risk|constraint|concern|delay|requires|blocked|shortage|gap/i)
+            interaction_text(interaction).match?(/risk|constraint|concern|delay|requires|blocked|shortage|gap/i)
           end
           sections = [
             fake_section("meeting_ask", "Why this meeting", [
@@ -102,7 +100,7 @@ module Holocron
               fake_item("Close", "Summarize decisions, owners, and deadlines before ending.", allowed_refs.call("talking_points", [request] + action_evidence))
             ]),
             fake_section("risks", "Risks and sensitivities", risk_evidence ? [
-              fake_item("Constraint", risk_evidence.dig("facts", "summary"), allowed_refs.call("risks", [risk_evidence]))
+              fake_item("Constraint", interaction_text(risk_evidence), allowed_refs.call("risks", [risk_evidence]))
             ] : []),
             fake_section("open_questions", "Open questions", [
               fake_item("Ownership", "Who will own each follow-up after the meeting?", [])
@@ -116,6 +114,13 @@ module Holocron
             input_tokens: input.split.length,
             output_tokens: sections.sum { |section| section.fetch("items").sum { |item| item.fetch("text").split.length } }
           }
+        end
+
+        def interaction_text(interaction)
+          spans = Array(interaction.dig("facts", "evidence_spans"))
+          return spans.filter_map { |span| span["text"] }.join(" ") if spans.any?
+
+          interaction.dig("facts", "summary").to_s
         end
 
         def fake_section(type, title, items)

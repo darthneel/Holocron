@@ -132,7 +132,12 @@ candidate-recency rankings with reciprocal-rank fusion. Long, information-dense
 interactions also receive deterministic high-signal child documents for decisions,
 commitments, concerns, and requests. Child matches collapse back to one
 authoritative interaction before context limits are applied, so verbose records do
-not consume multiple evidence slots. Neon creates a pgvector HNSW index; local
+not consume multiple evidence slots. The model receives up to three relevant spans
+from a matched parent, while retrieval diagnostics remain in version audits rather
+than consuming generation tokens. Fused selection preserves attendee coverage and
+chooses a diverse 10–12 total interactions instead of always filling the 15-record
+ceiling. Lexical candidates emphasize identifiers, names, and rare corpus terms.
+Neon creates a pgvector HNSW index; local
 PostgreSQL installations without pgvector use an array-backed development
 fallback with the same workspace filter and deterministic fake embeddings.
 Generated versions retain retrieval metadata and model usage so reviewers can

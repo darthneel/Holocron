@@ -48,7 +48,7 @@ module Holocron
           vector: vector,
           raw_vector: query_embedding.vectors.first,
           model: model,
-          limit: limit * 6,
+          limit: limit * 3,
           include_bursts: fused
         ).select { |row| row[:similarity].to_f >= minimum_similarity }
       )
@@ -66,7 +66,7 @@ module Holocron
       lexical_rows = []
       rows = if fused
         lexical_rows = collapse_by_source(
-          lexical_ranked_documents(query: query, model: model, limit: limit * 6)
+          lexical_ranked_documents(query: query, model: model, limit: limit * 2)
         )
         candidate_source_ids = (vector_rows + lexical_rows + balanced_rows).map { |row| row[:source_id] }.uniq
         recency_rows = recency_ranked_documents(candidate_source_ids)
@@ -109,6 +109,7 @@ module Holocron
           rrf_score: row[:rrf_score]&.to_f,
           matched_unit_type: row[:unit_type],
           matched_excerpt: metadata["excerpt"],
+          matched_evidence_spans: row[:matched_bursts],
           retrieval_signals: row[:retrieval_signals]
         )
       end.first(limit)
@@ -236,7 +237,6 @@ module Holocron
 
     def overview_document(interaction:, person:, organization:)
       content = [
-        "Unit: interaction overview",
         "Interaction type: #{interaction[:interaction_type]}",
         "Person: #{person&.fetch(:display_name, 'Unknown person')}",
         organization && "Organization: #{organization[:name]}",
@@ -386,8 +386,11 @@ module Holocron
     end
 
     def lexical_ranked_documents(query:, model:, limit:, source_ids: nil)
-      rank = Sequel.lit("ts_rank_cd(search_vector, websearch_to_tsquery('english', ?))", query)
-      match = Sequel.lit("search_vector @@ websearch_to_tsquery('english', ?)", query)
+      lexical_query = lexical_query_for(query)
+      return [] if lexical_query.empty?
+
+      rank = Sequel.lit("ts_rank_cd(search_vector, websearch_to_tsquery('english', ?))", lexical_query)
+      match = Sequel.lit("search_vector @@ websearch_to_tsquery('english', ?)", lexical_query)
       semantic_dataset(model: model, source_ids: source_ids, include_bursts: true)
         .where(match)
         .select_all(:semantic_documents)
@@ -395,6 +398,43 @@ module Holocron
         .reverse_order(rank)
         .limit(limit)
         .all
+    end
+
+    def lexical_query_for(query)
+      stopwords = %w[
+        about after again against all also and are because been before being between both but can could
+        did does doing down during each few for from further had has have having here how into its may more
+        most not now our out over own same should some such than that the their them then there these they
+        this those through too under until very was were what when where which while who why will with would
+        your meeting discuss discussion request requested purpose availability
+      ]
+      identifiers = query.to_s.scan(/\b(?:[A-Z]{2,}(?:-[A-Z0-9]+)+|[A-Z]{2,}\s*\d{2,}|[A-Za-z]+[._-]v?\d+)\b/)
+        .map { |value| value.downcase.tr("_-", " ").squeeze(" ") }
+        .uniq
+        .first(6)
+      names = query.to_s.scan(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b/)
+        .map(&:downcase)
+        .reject { |value| value.start_with?("community resilience", "mayor park") }
+        .uniq
+        .first(4)
+      tokens = query.to_s.downcase.scan(/[a-z0-9]{3,}/)
+        .reject { |token| stopwords.include?(token) }
+        .uniq
+      rare_tokens = tokens
+        .map { |token| [token, lexical_document_frequency(token)] }
+        .sort_by { |token, frequency| [frequency, token] }
+        .first(10)
+        .map(&:first)
+      phrases = (identifiers + names).map { |phrase| %Q{"#{phrase}"} }
+      (phrases + rare_tokens).uniq.join(" OR ")
+    end
+
+    def lexical_document_frequency(token)
+      match = Sequel.lit("search_vector @@ plainto_tsquery('english', ?)", token)
+      @db[:semantic_documents]
+        .where(workspace_id: workspace_id, source_type: "interaction")
+        .where(match)
+        .count
     end
 
     def semantic_dataset(model:, source_ids: nil, include_bursts: true)
@@ -408,20 +448,36 @@ module Holocron
       rows.each_with_object([]) do |row, collapsed|
         existing_index = collapsed.index { |candidate| candidate[:source_id] == row[:source_id] }
         unless existing_index
-          collapsed << row
+          collapsed << row.merge(matched_bursts: burst_spans(row))
           next
         end
-        next unless collapsed[existing_index][:unit_type] != "burst" && row[:unit_type] == "burst"
 
         ranked_parent = collapsed[existing_index]
-        collapsed[existing_index] = ranked_parent.merge(
-          unit_type: row[:unit_type],
-          unit_key: row[:unit_key],
-          position: row[:position],
-          content: row[:content],
-          metadata_json: row[:metadata_json]
-        )
+        combined_bursts = (Array(ranked_parent[:matched_bursts]) + burst_spans(row))
+          .uniq { |span| span["unit_key"] }
+          .first(3)
+        if ranked_parent[:unit_type] != "burst" && row[:unit_type] == "burst"
+          ranked_parent = ranked_parent.merge(
+            unit_type: row[:unit_type],
+            unit_key: row[:unit_key],
+            position: row[:position],
+            content: row[:content],
+            metadata_json: row[:metadata_json]
+          )
+        end
+        collapsed[existing_index] = ranked_parent.merge(matched_bursts: combined_bursts)
       end
+    end
+
+    def burst_spans(row)
+      return [] unless row[:unit_type] == "burst"
+
+      metadata = parsed_metadata(row[:metadata_json])
+      [{
+        "unit_key" => row[:unit_key],
+        "kind" => metadata["signal_kind"],
+        "text" => metadata["excerpt"]
+      }.compact]
     end
 
     def recency_ranked_documents(source_ids)
@@ -444,6 +500,7 @@ module Holocron
             source_id: source_id,
             rrf_score: 0.0,
             retrieval_signals: [],
+            evidence_spans: [],
             best_row: nil
           }
           candidate[:rrf_score] += 1.0 / (RRF_K + index + 1)
@@ -454,6 +511,9 @@ module Holocron
             "lexical_score" => row[:lexical_score]&.to_f&.round(6),
             "occurred_at" => row[:occurred_at]&.iso8601
           }.compact
+          candidate[:evidence_spans] = (candidate[:evidence_spans] + Array(row[:matched_bursts]))
+            .uniq { |span| span["unit_key"] }
+            .first(3)
           candidate[:best_row] = preferred_match(candidate[:best_row], row)
         end
       end
@@ -462,6 +522,7 @@ module Holocron
         (candidate[:best_row] || {}).merge(
           source_id: candidate[:source_id],
           rrf_score: candidate[:rrf_score],
+          matched_bursts: candidate[:evidence_spans],
           retrieval_signals: candidate[:retrieval_signals]
         )
       end

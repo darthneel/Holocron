@@ -7,12 +7,14 @@ require_relative "semantic_index"
 
 module Holocron
   class BriefingContextAssembler
-    CONTEXT_VERSION = "briefing-context-v5"
+    CONTEXT_VERSION = "briefing-context-v7"
     RETRIEVAL_STRATEGIES = %w[linked_recency semantic hybrid fused].freeze
     MAX_PEOPLE = 12
     MAX_CURRENT_INTERACTIONS_PER_PERSON = 2
     MAX_PRIOR_INTERACTIONS_PER_PERSON = 5
     MAX_INTERACTIONS = 15
+    FUSED_MIN_INTERACTIONS = 10
+    FUSED_MAX_INTERACTIONS = 12
     MAX_CONTEXT_CHARACTERS = 60_000
     ROLE_RANK = {"requester" => 0, "required" => 1, "optional" => 2, "staff" => 3}.freeze
 
@@ -113,7 +115,15 @@ module Holocron
       manifest["section_source_refs"] = section_source_refs(sources)
       manifest["retrieval"]["section_evidence_counts"] = manifest["section_source_refs"]
         .transform_values(&:length)
-      manifest["retrieval"]["context_characters"] = JSON.generate(manifest).length
+      manifest["retrieval"]["audit_context_characters"] = JSON.generate(manifest).length
+      manifest["retrieval"]["context_characters"] = JSON.generate(
+        {
+          "context_version" => manifest["context_version"],
+          "workspace_timezone" => manifest["workspace_timezone"],
+          "sources" => manifest["sources"],
+          "limitations" => manifest["limitations"]
+        }
+      ).length
       manifest
     end
 
@@ -206,7 +216,9 @@ module Holocron
         max_per_person: attendee_balanced ? 3 : nil,
         fused: fused
       )
-      selected = (current + result.fetch(:interactions)).uniq { |interaction| interaction[:id] }.first(MAX_INTERACTIONS)
+      candidates = result.fetch(:interactions)
+      prior = fused ? select_fused_interactions(candidates, people: people, current: current) : candidates
+      selected = (current + prior).uniq { |interaction| interaction[:id] }.first(MAX_INTERACTIONS)
       metadata = {
         "semantic_records_indexed" => result[:indexed_records],
         "semantic_interactions_indexed" => result[:indexed_interactions],
@@ -226,13 +238,89 @@ module Holocron
         "vector_candidates" => result[:vector_candidates],
         "lexical_candidates" => result[:lexical_candidates],
         "attendee_candidates" => result[:attendee_candidates],
-        "semantic_matches_selected" => result.fetch(:interactions).length,
+        "semantic_matches_considered" => candidates.length,
+        "semantic_matches_selected" => prior.length,
+        "adaptive_selection_enabled" => fused,
+        "adaptive_minimum_interactions" => fused ? FUSED_MIN_INTERACTIONS : nil,
+        "adaptive_maximum_interactions" => fused ? FUSED_MAX_INTERACTIONS : nil,
+        "selected_candidates" => prior.map do |interaction|
+          {
+            "interaction_id" => interaction[:id],
+            "person_id" => interaction[:person_id],
+            "rrf_score" => interaction[:rrf_score]&.round(6),
+            "retrieval_signals" => interaction[:retrieval_signals]
+          }.compact
+        end,
         "attendee_balancing_enabled" => attendee_balanced,
         "maximum_matches_per_person" => attendee_balanced ? 3 : nil,
         "attendee_balanced_matches_selected" => result[:attendee_balanced_matches_selected],
         "attendees_with_history_selected" => result[:attendees_with_history_selected]
       }
       [selected, 0, metadata]
+    end
+
+    def select_fused_interactions(candidates, people:, current:)
+      minimum_prior = [FUSED_MIN_INTERACTIONS - current.length, 0].max
+      maximum_prior = [FUSED_MAX_INTERACTIONS - current.length, 0].max
+      return candidates.first(maximum_prior) if candidates.length <= minimum_prior
+
+      covered_person_ids = current.map { |interaction| interaction[:person_id] }.uniq
+      selected = people.reject { |person| covered_person_ids.include?(person[:id]) }.filter_map do |person|
+        candidates.find { |candidate| candidate[:person_id] == person[:id] }
+      end.uniq { |candidate| candidate[:id] }.first(maximum_prior)
+      target_minimum = [minimum_prior, candidates.length].min
+      target_maximum = [maximum_prior, candidates.length].min
+
+      while selected.length < target_minimum
+        candidate = best_diverse_candidate(candidates - selected, selected)
+        break unless candidate
+
+        selected << candidate
+      end
+
+      while selected.length < target_maximum
+        candidate = best_diverse_candidate(candidates - selected, selected)
+        break unless candidate && distinctive_candidate?(candidate, selected)
+
+        selected << candidate
+      end
+
+      candidate_rank = candidates.each_with_index.to_h { |candidate, index| [candidate[:id], index] }
+      selected.sort_by { |candidate| candidate_rank.fetch(candidate[:id]) }
+    end
+
+    def best_diverse_candidate(candidates, selected)
+      maximum_score = candidates.map { |candidate| candidate[:rrf_score].to_f }.max.to_f
+      candidates.max_by do |candidate|
+        relevance = maximum_score.zero? ? 0.0 : candidate[:rrf_score].to_f / maximum_score
+        redundancy = selected.map { |chosen| text_overlap(candidate, chosen) }.max.to_f
+        (0.82 * relevance) + (0.18 * (1.0 - redundancy))
+      end
+    end
+
+    def distinctive_candidate?(candidate, selected)
+      return true if selected.none? { |chosen| chosen[:person_id] == candidate[:person_id] }
+      return true if selected.map { |chosen| text_overlap(candidate, chosen) }.max.to_f < 0.62
+
+      candidate_kinds = evidence_kinds(candidate)
+      selected_kinds = selected.flat_map { |chosen| evidence_kinds(chosen) }.uniq
+      (candidate_kinds - selected_kinds).any?
+    end
+
+    def evidence_kinds(interaction)
+      Array(interaction[:matched_evidence_spans]).filter_map { |span| span["kind"] }.uniq
+    end
+
+    def text_overlap(left, right)
+      left_tokens = retrieval_text(left).downcase.scan(/[a-z0-9]{3,}/).uniq
+      right_tokens = retrieval_text(right).downcase.scan(/[a-z0-9]{3,}/).uniq
+      union = left_tokens | right_tokens
+      union.empty? ? 0.0 : (left_tokens & right_tokens).length.to_f / union.length
+    end
+
+    def retrieval_text(interaction)
+      spans = Array(interaction[:matched_evidence_spans]).filter_map { |span| span["text"] }
+      spans.empty? ? interaction[:summary].to_s : spans.join(" ")
     end
 
     def current_request_interactions(request_id, people)
@@ -274,27 +362,18 @@ module Holocron
         source["source_type"] == "interaction" && source.dig("facts", "current_request")
       end
       prior_sources = sources.select(&prior_interaction)
-      action_sources = prioritize_interactions(prior_sources, /decision|commit|owner|next step|follow.?up|agreed|asked|requested|recommend|plan|threshold/i)
-      risk_sources = prioritize_interactions(prior_sources, /risk|constraint|concern|blocked|requires|without|only if|delay|shortage|unconfirmed|gap|barrier|capacity|security|accessib/i)
+      prior_refs = prior_sources.map { |source| source.fetch("source_ref") }
+      interaction_refs = (current_refs + prior_refs).uniq
       identity_refs = refs_for.call { |source| %w[person organization].include?(source["source_type"]) }
 
       {
         "meeting_ask" => (request_refs + current_refs).first(4),
-        "desired_outcomes" => (request_refs + action_sources.map { |source| source.fetch("source_ref") }).uniq.first(7),
-        "decision_context" => (
-          prior_sources.first(8).map { |source| source.fetch("source_ref") } + identity_refs.first(2)
-        ).uniq,
-        "talking_points" => (request_refs + action_sources.map { |source| source.fetch("source_ref") }).uniq.first(7),
-        "risks" => (request_refs + risk_sources.map { |source| source.fetch("source_ref") }).uniq.first(7),
-        "open_questions" => (request_refs + risk_sources.map { |source| source.fetch("source_ref") }).uniq.first(5)
+        "desired_outcomes" => (request_refs + interaction_refs).uniq,
+        "decision_context" => (prior_refs + identity_refs).uniq,
+        "talking_points" => (request_refs + interaction_refs).uniq,
+        "risks" => (request_refs + interaction_refs).uniq,
+        "open_questions" => (request_refs + interaction_refs).uniq
       }
-    end
-
-    def prioritize_interactions(sources, pattern)
-      matching, remaining = sources.partition do |source|
-        [source.dig("facts", "summary"), source["source_excerpt"]].compact.join(" ").match?(pattern)
-      end
-      matching + remaining
     end
 
     def request_source(request, candidate_windows)
@@ -384,23 +463,33 @@ module Holocron
     end
 
     def interaction_source(interaction)
+      evidence_spans = Array(interaction[:matched_evidence_spans]).filter_map do |span|
+        text = bounded(span["text"], 1_000)
+        next unless text
+
+        {"kind" => span["kind"], "text" => text}.compact
+      end
       facts = {
         "person_name" => interaction[:person_name],
         "interaction_type" => interaction[:interaction_type],
         "occurred_at" => iso8601(interaction[:occurred_at]),
-        "summary" => bounded(interaction[:summary], 2_000),
         "current_request" => interaction[:current_request]
       }
-      facts["semantic_similarity"] = interaction[:semantic_similarity].round(4) if interaction[:semantic_similarity]
-      facts["lexical_score"] = interaction[:lexical_score].round(4) if interaction[:lexical_score]
-      facts["rrf_score"] = interaction[:rrf_score].round(6) if interaction[:rrf_score]
-      facts["matched_unit_type"] = interaction[:matched_unit_type] if interaction[:matched_unit_type]
-      facts["retrieval_signals"] = interaction[:retrieval_signals] if interaction[:retrieval_signals]
+      if evidence_spans.any?
+        facts["evidence_spans"] = evidence_spans
+      else
+        facts["summary"] = bounded(interaction[:summary], 2_000)
+      end
+      excerpt = if evidence_spans.any?
+        evidence_spans.map { |span| span.fetch("text") }.join(" • ")
+      else
+        facts["summary"]
+      end
       source(
         type: "interaction",
         id: interaction[:id],
         label: "#{humanize(interaction[:interaction_type])} with #{interaction[:person_name]}",
-        excerpt: bounded(interaction[:matched_excerpt], 2_000) || facts["summary"],
+        excerpt: bounded(excerpt, 2_000),
         facts: facts
       )
     end

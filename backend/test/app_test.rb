@@ -955,6 +955,10 @@ class HolocronAppTest < Minitest::Test
     context_refs = manifest.dig("section_source_refs", "decision_context")
     context_sources = manifest.fetch("sources").select { |source| context_refs.include?(source.fetch("source_ref")) }
     assert context_sources.none? { |source| source["source_type"] == "interaction" && source.dig("facts", "current_request") }
+    all_interaction_refs = manifest.fetch("sources")
+      .select { |source| source.fetch("source_type") == "interaction" }
+      .map { |source| source.fetch("source_ref") }
+    assert_empty all_interaction_refs - manifest.dig("section_source_refs", "talking_points")
   end
 
   def test_semantic_retrieval_never_crosses_workspace_boundary
@@ -1020,8 +1024,8 @@ class HolocronAppTest < Minitest::Test
   def test_semantic_backfill_batches_and_is_idempotent
     db = Holocron::Database.db
     workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
-    person = db[:people].where(workspace_id: workspace.fetch(:id)).first
     actor = db[:workspace_members].where(workspace_id: workspace.fetch(:id)).first
+    person = semantic_fixture_person(db, workspace: workspace, actor: actor)
     now = Time.now.utc
     db[:interactions].insert(
       id: SecureRandom.uuid,
@@ -1059,8 +1063,8 @@ class HolocronAppTest < Minitest::Test
   def test_semantic_index_creates_only_high_signal_child_bursts_and_is_idempotent
     db = Holocron::Database.db
     workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
-    person = db[:people].where(workspace_id: workspace.fetch(:id)).first
     actor = db[:workspace_members].where(workspace_id: workspace.fetch(:id)).first
+    person = semantic_fixture_person(db, workspace: workspace, actor: actor)
     now = Time.now.utc
     interaction_id = SecureRandom.uuid
     summary = [
@@ -1103,8 +1107,8 @@ class HolocronAppTest < Minitest::Test
   def test_fused_retrieval_combines_rankers_and_collapses_bursts_to_one_interaction
     db = Holocron::Database.db
     workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
-    person = db[:people].where(workspace_id: workspace.fetch(:id)).first
     actor = db[:workspace_members].where(workspace_id: workspace.fetch(:id)).first
+    person = semantic_fixture_person(db, workspace: workspace, actor: actor)
     now = Time.now.utc
     interaction_id = SecureRandom.uuid
     db[:interactions].insert(
@@ -1137,11 +1141,46 @@ class HolocronAppTest < Minitest::Test
     assert_includes rankers, "recency"
     assert_equal "burst", match.fetch(:matched_unit_type)
     assert_match(/August 14/, match.fetch(:matched_excerpt))
+    assert_operator match.fetch(:matched_evidence_spans).length, :>=, 2
     expected_rrf = match.fetch(:retrieval_signals).sum do |signal|
       1.0 / (Holocron::SemanticIndex::RRF_K + signal.fetch("rank"))
     end
     assert_in_delta expected_rrf, match.fetch(:rrf_score), 0.000_000_1
     assert_equal true, result.fetch(:fusion_enabled)
+    assert_operator result.fetch(:lexical_candidates), :<, result.fetch(:indexed_records)
+  end
+
+  def test_fused_model_context_omits_diagnostics_and_adaptively_limits_interactions
+    briefing = create_briefing(
+      isolated_request_overrides("compact-fused").merge(
+        purpose: "Cooling center activation thresholds and transit access",
+        original_request_text: "Prepare decisions about cooling sites, heat alerts, and transit support."
+      )
+    )
+    db = Holocron::Database.db
+    workspace = db[:workspaces].first
+    stored_briefing = db[:briefings].where(id: briefing.fetch("id")).first
+    manifest = Holocron::BriefingContextAssembler.new(
+      workspace: workspace,
+      strategy: "fused"
+    ).call(briefing: stored_briefing)
+    model_manifest = JSON.parse(Holocron::BriefingGeneration.prompt(manifest).fetch(:input))
+    interaction_sources = manifest.fetch("sources").select do |source|
+      source.fetch("source_type") == "interaction"
+    end
+
+    assert_operator interaction_sources.length, :<=, Holocron::BriefingContextAssembler::FUSED_MAX_INTERACTIONS
+    assert_equal true, manifest.dig("retrieval", "adaptive_selection_enabled")
+    assert_operator manifest.dig("retrieval", "context_characters"), :<, manifest.dig("retrieval", "audit_context_characters")
+    refute model_manifest.key?("retrieval")
+    refute model_manifest.key?("section_source_refs")
+    interaction_sources.each do |source|
+      facts = source.fetch("facts")
+      refute facts.key?("semantic_similarity")
+      refute facts.key?("lexical_score")
+      refute facts.key?("rrf_score")
+      refute facts.key?("retrieval_signals")
+    end
   end
 
   def test_grounded_generation_derives_a_cited_meeting_snapshot_from_linked_records
@@ -1513,6 +1552,23 @@ class HolocronAppTest < Minitest::Test
 
   def post_json(path, body, headers = {})
     post path, JSON.generate(body), {"CONTENT_TYPE" => "application/json"}.merge(headers)
+  end
+
+  def semantic_fixture_person(db, workspace:, actor:)
+    db[:people].where(workspace_id: workspace.fetch(:id)).first || begin
+      now = Time.now.utc
+      id = SecureRandom.uuid
+      db[:people].insert(
+        id: id,
+        workspace_id: workspace.fetch(:id),
+        created_by_workspace_member_id: actor.fetch(:id),
+        display_name: "Semantic Fixture Person",
+        primary_email: "semantic-fixture-#{SecureRandom.hex(4)}@example.org",
+        created_at: now,
+        updated_at: now
+      )
+      db[:people].where(id: id).first
+    end
   end
 
   def patch_json(path, body, headers = {})

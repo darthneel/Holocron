@@ -107,8 +107,9 @@ module Holocron
           Return exactly one section for each required section_type. Do not produce meeting_snapshot;
           the system creates it from verified meeting records. Each section contains compact items,
           not paragraphs. Keep each item to one or two sentences and attach at most three source_refs
-          that directly support that individual item. Use only refs assigned to that section in
-          section_source_refs. Do not repeat the same fact in multiple sections.
+          that directly support that individual item. Use only source_refs present in the supplied
+          sources. Current-request interactions may support asks and recommendations but never prior
+          decision context. Do not repeat the same fact in multiple sections.
 
           meeting_ask (1-2 items): state the concrete reason for the meeting and the ask.
           desired_outcomes (2-4 items): describe specific decisions, commitments, owners, or next steps to seek.
@@ -123,7 +124,16 @@ module Holocron
           missing information. Current-request interactions describe intake and may not be used as
           prior decision context. Return only the required structured output.
         PROMPT
-        input: JSON.pretty_generate(manifest)
+        input: JSON.pretty_generate(model_manifest(manifest))
+      }
+    end
+
+    def model_manifest(manifest)
+      {
+        "context_version" => manifest["context_version"],
+        "workspace_timezone" => manifest["workspace_timezone"],
+        "sources" => manifest.fetch("sources", []),
+        "limitations" => manifest.fetch("limitations", [])
       }
     end
 
