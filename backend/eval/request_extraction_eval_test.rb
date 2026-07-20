@@ -135,7 +135,7 @@ module RequestExtractionEval
     FileUtils.mkdir_p(directory)
     path = File.join(directory, "request-extraction-#{Time.now.utc.strftime("%Y%m%dT%H%M%SZ")}.json")
     payload = {
-      suite: "request-extraction-v1",
+      suite: "request-extraction-v2",
       prompt_version: Holocron::RequestExtractions::PROMPT_VERSION,
       provider: ENV["AI_REQUEST_EXTRACTION_PROVIDER"],
       configured_model: ENV["AI_REQUEST_EXTRACTION_MODEL"],

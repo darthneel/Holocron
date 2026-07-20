@@ -123,5 +123,23 @@
       {"path": "requested_duration_minutes", "equals": 60},
       {"path": "availability_notes", "includes": "Tuesday afternoon"}
     ]
+  },
+  {
+    "id": "decision_rich_request",
+    "description": "Preserves separate decisions, ownership, authority, readiness, dependencies, deliverables, and unresolved gaps for briefing generation.",
+    "input": [
+      "From: Amina Cole <amina@riverdistrict.org>",
+      "Subject: Riverfront opening decisions",
+      "Duration: 45 minutes",
+      "",
+      "We need the Mayor to approve the October 12 opening date and decide whether Public Works or Parks owns day-of operations. The opening-date decision depends on the fire inspection passing by October 5; readiness means the occupancy permit and traffic plan are both approved. Carlos Vega will send the revised traffic plan by September 30. We still need to know whether the Fire Marshal, who can sign off on occupancy, will attend. Budget is capped at $75,000."
+    ],
+    "assertions": [
+      {"path": "briefing_context.agenda_items", "contains_object": {"topic": "October 12 opening date", "decision_maker": "Mayor"}},
+      {"path": "briefing_context.agenda_items", "contains_object": {"owner": null, "decision_maker": "Mayor"}},
+      {"path": "briefing_context.constraints", "includes": "Budget is capped at $75,000."},
+      {"path": "briefing_context.promised_deliverables", "contains_object": {"deliverable": "revised traffic plan", "owner": "Carlos Vega", "deadline": "September 30"}},
+      {"path": "briefing_context.unresolved_questions", "includes": "Fire Marshal"}
+    ]
   }
 ]

@@ -10,13 +10,13 @@ require_relative "database"
 
 module Holocron
   module RequestExtractions
-    PROMPT_VERSION = "request-extraction-v1"
+    PROMPT_VERSION = "request-extraction-v2"
     EMAIL_PATTERN = URI::MailTo::EMAIL_REGEXP
     PARTICIPANT_ROLES = %w[required optional staff].freeze
     OUTPUT_SCHEMA = {
       "type" => "object",
       "additionalProperties" => false,
-      "required" => %w[requester purpose requested_duration_minutes availability_notes participants candidate_windows warnings],
+      "required" => %w[requester purpose requested_duration_minutes availability_notes participants candidate_windows briefing_context warnings],
       "properties" => {
         "requester" => {
           "type" => "object",
@@ -57,6 +57,49 @@ module Holocron
               "ends_at" => {"type" => ["string", "null"]},
               "notes" => {"type" => ["string", "null"]}
             }
+          }
+        },
+        "briefing_context" => {
+          "type" => "object",
+          "additionalProperties" => false,
+          "required" => %w[agenda_items constraints promised_deliverables unresolved_questions],
+          "properties" => {
+            "agenda_items" => {
+              "type" => "array",
+              "items" => {
+                "type" => "object",
+                "additionalProperties" => false,
+                "required" => %w[topic ask decision_needed desired_outcome owner decision_maker deadline readiness_standard dependencies evidence_excerpt],
+                "properties" => {
+                  "topic" => {"type" => ["string", "null"]},
+                  "ask" => {"type" => ["string", "null"]},
+                  "decision_needed" => {"type" => ["string", "null"]},
+                  "desired_outcome" => {"type" => ["string", "null"]},
+                  "owner" => {"type" => ["string", "null"]},
+                  "decision_maker" => {"type" => ["string", "null"]},
+                  "deadline" => {"type" => ["string", "null"]},
+                  "readiness_standard" => {"type" => ["string", "null"]},
+                  "dependencies" => {"type" => "array", "items" => {"type" => "string"}},
+                  "evidence_excerpt" => {"type" => ["string", "null"]}
+                }
+              }
+            },
+            "constraints" => {"type" => "array", "items" => {"type" => "string"}},
+            "promised_deliverables" => {
+              "type" => "array",
+              "items" => {
+                "type" => "object",
+                "additionalProperties" => false,
+                "required" => %w[deliverable owner deadline status],
+                "properties" => {
+                  "deliverable" => {"type" => "string"},
+                  "owner" => {"type" => ["string", "null"]},
+                  "deadline" => {"type" => ["string", "null"]},
+                  "status" => {"type" => ["string", "null"]}
+                }
+              }
+            },
+            "unresolved_questions" => {"type" => "array", "items" => {"type" => "string"}}
           }
         },
         "warnings" => {"type" => "array", "items" => {"type" => "string"}}
@@ -100,7 +143,7 @@ module Holocron
 
       if status == "succeeded"
         raw_output = output
-        output, validation_errors, warnings = normalize_output(output)
+        output, validation_errors, warnings = normalize_output(output, input: input, workspace: workspace)
         unless validation_errors.empty?
           status = "failed"
           failure_reason = "Model output failed deterministic schema validation."
@@ -166,8 +209,27 @@ module Holocron
           Use null when a value is missing or ambiguous. Preserve general timing language in
           availability_notes. Candidate dates must be YYYY-MM-DD. Only emit RFC 3339 timestamps
           when the source gives enough timezone information to identify an instant. Do not infer a
-          participant role when it is unclear. The office timezone is #{workspace[:timezone]} and
-          today's date is #{Date.today.iso8601}. Return only the required structured output.
+          participant role when it is unclear. When the request gives a specific year, calendar
+          date, local start/end range, and the office's named timezone (for example, Mountain Time
+          for this office), populate candidate_date, starts_at, and ends_at; do not leave that
+          information only in candidate-window notes. When an availability date omits its year,
+          resolve it to the next occurrence in the office calendar and note that the year was inferred.
+
+          Only create a participant record for a named individual. Do not create a participant for
+          an unnamed team, department, organization, or decision-maker; capture an explicitly
+          missing attendee or authority as an unresolved question in briefing_context instead.
+
+          Preserve the request's decision structure in briefing_context. Create one agenda item for
+          each distinct topic or requested decision. Separate what is being asked from the decision,
+          desired outcome, owner, decision-maker, deadline, readiness standard, and dependencies.
+          Use null or an empty array for anything not explicitly stated; do not turn a missing fact
+          into a recommendation. Capture explicit constraints, sensitivities, promised deliverables,
+          and unresolved questions without duplicating them across fields. For every agenda item,
+          preserve a short exact evidence_excerpt from the supplied request that supports it. Keep
+          purpose as a concise human-readable summary rather than using it to flatten all of this detail.
+
+          The office timezone is #{workspace[:timezone]} and today's date is #{Date.today.iso8601}.
+          Return only the required structured output.
         PROMPT
         input: input
       }
@@ -186,7 +248,7 @@ module Holocron
       value.strip
     end
 
-    def normalize_output(value)
+    def normalize_output(value, input: nil, workspace: nil)
       errors = {}
       warnings = []
       unless value.is_a?(Hash)
@@ -202,6 +264,7 @@ module Holocron
       candidate_windows = value["candidate_windows"]
       errors["candidate_windows"] = "Candidate windows must be a list." unless candidate_windows.is_a?(Array)
       candidate_windows = [] unless candidate_windows.is_a?(Array)
+      candidate_windows = recover_natural_candidate_windows(candidate_windows, input: input, workspace: workspace)
       model_warnings = value["warnings"]
       errors["warnings"] = "Warnings must be a list of strings." unless model_warnings.is_a?(Array) && model_warnings.all? { |warning| warning.is_a?(String) }
       warnings.concat(model_warnings.select { |warning| warning.is_a?(String) }.map(&:strip).reject(&:empty?)) if model_warnings.is_a?(Array)
@@ -254,10 +317,14 @@ module Holocron
         elsif entry["email"]
           entry["email"] = entry["email"].downcase
         end
-        warnings << "Confirm participant #{index + 1}'s name." unless entry["name"]
+        unless entry["name"]
+          warnings << "Skipped an extracted participant without a name; confirm attendees manually."
+          next
+        end
         warnings << "Confirm participant #{index + 1}'s role." unless entry["role"]
         entry
       end
+      normalized_participants = enrich_participants_from_workspace(normalized_participants, workspace)
 
       if candidate_windows.length > 10
         warnings << "Only the first 10 extracted candidate windows were retained."
@@ -293,6 +360,8 @@ module Holocron
         }
       end
 
+      briefing_context = normalize_briefing_context(value["briefing_context"], errors, warnings)
+
       warnings << "Confirm the requester name." unless normalized_requester["name"]
       warnings << "Confirm the meeting purpose." unless purpose
       warnings << "Confirm the meeting duration." unless duration
@@ -303,9 +372,238 @@ module Holocron
         "availability_notes" => availability_notes,
         "participants" => normalized_participants,
         "candidate_windows" => normalized_windows,
+        "briefing_context" => briefing_context,
         "warnings" => warnings.uniq
       }
       [normalized, errors, warnings.uniq]
+    end
+
+    def recover_natural_candidate_windows(model_windows, input:, workspace:)
+      recovered = natural_candidate_windows(input, workspace: workspace)
+      return model_windows if recovered.empty?
+      return recovered if model_windows.empty?
+
+      model_windows.each_with_index.map do |window, index|
+        next window unless window.is_a?(Hash)
+
+        recovered_window = recovered[index]
+        next window unless recovered_window
+
+        incomplete = %w[candidate_date starts_at ends_at].any? do |key|
+          !candidate_window_value_usable?(key, window[key])
+        end
+        recovered_window.merge(window) do |key, recovered_value, model_value|
+          ((key == "notes" && incomplete) || !candidate_window_value_usable?(key, model_value)) ? recovered_value : model_value
+        end
+      end
+    end
+
+    def natural_candidate_windows(input, workspace:)
+      return [] unless input.is_a?(String) && workspace.is_a?(Hash)
+
+      natural_window_segments(input).flat_map do |sentence|
+        time_range = sentence.match(natural_time_range_pattern)
+        next [] unless time_range
+
+        sentence.to_enum(:scan, natural_date_pattern).filter_map do
+          date_match = Regexp.last_match
+          date = natural_date(date_match.named_captures)
+          next unless date
+          next if date_match[:weekday] && !date_match[:weekday].casecmp?(Date::DAYNAMES[date.wday])
+
+          offset = named_timezone_offset(time_range[:timezone], date, workspace[:timezone])
+          starts_at = offset && local_timestamp(date, time_range[:start], offset)
+          ends_at = offset && local_timestamp(date, time_range[:finish], offset)
+          next unless starts_at && ends_at && ends_at > starts_at
+
+          {
+            "candidate_date" => date.iso8601,
+            "starts_at" => starts_at.iso8601,
+            "ends_at" => ends_at.iso8601,
+            "notes" => sentence.strip
+          }
+        end
+      end.uniq { |window| [window["candidate_date"], window["starts_at"], window["ends_at"]] }
+    end
+
+    def natural_window_segments(input)
+      input.split(/\n+/).flat_map do |line|
+        line.split(/(?<=[.!?])\s+(?!(?:and|or)\b)/i)
+      end
+    end
+
+    def natural_date_pattern
+      /(?<weekday>Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)?\s*,?\s*(?<month>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?<day>\d{1,2})(?:,?\s*(?<year>\d{4}))?/i
+    end
+
+    def natural_time_range_pattern
+      /(?:(?:between|from)\s+)?(?<start>\d{1,2}(?::\d{2})?\s*(?:a\.?(?:m\.?)?|p\.?(?:m\.?)?)?|noon|midnight)\s*(?:and|to|[-–—])\s*(?<finish>\d{1,2}(?::\d{2})?\s*(?:a\.?(?:m\.?)?|p\.?(?:m\.?)?)?|noon|midnight)\s*(?<timezone>Mountain(?:\s+(?:Standard|Daylight))?\s+Time|MDT|MST|MT)\b/i
+    end
+
+    def natural_date(fields)
+      month = month_number(fields.fetch("month"))
+      day = Integer(fields.fetch("day"), exception: false)
+      return unless month && day
+
+      year = Integer(fields["year"], exception: false) || Date.today.year
+      date = Date.new(year, month, day)
+      return date if fields["year"]
+
+      date < Date.today ? Date.new(year + 1, month, day) : date
+    rescue ArgumentError
+      nil
+    end
+
+    def candidate_window_value_usable?(key, value)
+      return false if value.nil? || (value.respond_to?(:strip) && value.strip.empty?)
+      return value.match?(/\A\d{4}-\d{2}-\d{2}\z/) if key == "candidate_date" && value.is_a?(String)
+      return value.match?(/\A\d{4}-\d{2}-\d{2}T/) if %w[starts_at ends_at].include?(key) && value.is_a?(String)
+
+      true
+    end
+
+    def month_number(value)
+      Date::MONTHNAMES.index { |month| month&.casecmp?(value.to_s) }
+    end
+
+    def named_timezone_offset(value, date, workspace_timezone)
+      timezone = value.to_s.downcase.gsub(/\s+/, " ").strip
+      return nil unless workspace_timezone == "America/Denver"
+      return "-06:00" if timezone == "mdt" || timezone.include?("daylight")
+      return "-07:00" if timezone == "mst" || timezone.include?("standard")
+      return mountain_daylight_time?(date) ? "-06:00" : "-07:00" if %w[mountain time mt].include?(timezone) || timezone == "mountain time"
+
+      nil
+    end
+
+    def mountain_daylight_time?(date)
+      march_transition = Date.new(date.year, 3, 8)
+      march_transition += 1 until march_transition.sunday?
+      november_transition = Date.new(date.year, 11, 1)
+      november_transition += 1 until november_transition.sunday?
+      date >= march_transition && date < november_transition
+    end
+
+    def local_timestamp(date, value, offset)
+      hour, minute = local_clock(value)
+      Time.new(date.year, date.month, date.day, hour, minute, 0, offset)
+    rescue ArgumentError
+      nil
+    end
+
+    def local_clock(value)
+      text = value.to_s.downcase.gsub(/\./, "").strip
+      return [12, 0] if text == "noon"
+      return [0, 0] if text == "midnight"
+
+      match = text.match(/\A(?<hour>\d{1,2})(?::(?<minute>\d{2}))?\s*(?<meridiem>am|pm)\z/)
+      raise ArgumentError, "Unsupported local time." unless match
+
+      hour = Integer(match[:hour])
+      minute = Integer(match[:minute] || "0")
+      raise ArgumentError, "Invalid local time." unless hour.between?(1, 12) && minute.between?(0, 59)
+
+      hour %= 12
+      hour += 12 if match[:meridiem] == "pm"
+      [hour, minute]
+    end
+
+    def enrich_participants_from_workspace(participants, workspace)
+      return participants unless workspace.is_a?(Hash) && workspace[:id]
+
+      db = Database.db
+      organizations = db[:organizations].where(workspace_id: workspace[:id]).all.to_h { |organization| [organization[:id], organization[:name]] }
+      people = db[:people].where(workspace_id: workspace[:id]).all.map do |person|
+        {name: person[:display_name], email: person[:primary_email], organization: organizations[person[:organization_id]], internal: false}
+      end
+      members = db[:workspace_members].where(workspace_id: workspace[:id], status: "active").all.map do |member|
+        {name: member[:display_name], email: member[:email], organization: workspace[:name], internal: true}
+      end
+      directory = people + members
+
+      participants.map do |participant|
+        match = participant["email"] && directory.find { |record| record[:email]&.casecmp?(participant["email"]) }
+        match ||= directory.find do |record|
+          next false unless record[:name]&.casecmp?(participant["name"])
+          next true if record[:internal] && participant["organization"].nil?
+
+          record[:organization]&.casecmp?(participant["organization"].to_s)
+        end
+        next participant unless match
+
+        participant.merge(
+          "email" => participant["email"] || match[:email],
+          "organization" => participant["organization"] || match[:organization]
+        )
+      end
+    end
+
+    def normalize_briefing_context(value, errors, warnings)
+      unless value.is_a?(Hash)
+        errors["briefing_context"] = "Briefing context must be an object."
+        return empty_briefing_context
+      end
+
+      agenda = value["agenda_items"]
+      constraints = value["constraints"]
+      deliverables = value["promised_deliverables"]
+      questions = value["unresolved_questions"]
+      errors["briefing_context.agenda_items"] = "Agenda items must be a list." unless agenda.is_a?(Array)
+      errors["briefing_context.constraints"] = "Constraints must be a list of strings." unless string_list?(constraints)
+      errors["briefing_context.promised_deliverables"] = "Promised deliverables must be a list." unless deliverables.is_a?(Array)
+      errors["briefing_context.unresolved_questions"] = "Unresolved questions must be a list of strings." unless string_list?(questions)
+
+      agenda = Array(agenda).first(12).each_with_index.filter_map do |item, index|
+        unless item.is_a?(Hash)
+          errors["briefing_context.agenda_items.#{index}"] = "Agenda item must be an object."
+          next
+        end
+        dependencies = item["dependencies"]
+        errors["briefing_context.agenda_items.#{index}.dependencies"] = "Dependencies must be a list of strings." unless string_list?(dependencies)
+        normalized = %w[topic ask decision_needed desired_outcome owner decision_maker deadline readiness_standard evidence_excerpt].to_h do |key|
+          [key, nullable_string(item[key], "briefing_context.agenda_items.#{index}.#{key}", errors, limit: 500)]
+        end
+        normalized["dependencies"] = normalize_string_list(dependencies, limit: 500, max: 12)
+        normalized
+      end
+      warnings << "Only the first 12 agenda items were retained." if Array(value["agenda_items"]).length > 12
+
+      normalized_deliverables = Array(deliverables).first(12).each_with_index.filter_map do |item, index|
+        unless item.is_a?(Hash)
+          errors["briefing_context.promised_deliverables.#{index}"] = "Promised deliverable must be an object."
+          next
+        end
+        deliverable = nullable_string(item["deliverable"], "briefing_context.promised_deliverables.#{index}.deliverable", errors, limit: 500)
+        unless deliverable
+          errors["briefing_context.promised_deliverables.#{index}.deliverable"] = "Deliverable is required."
+          next
+        end
+        {
+          "deliverable" => deliverable,
+          "owner" => nullable_string(item["owner"], "briefing_context.promised_deliverables.#{index}.owner", errors, limit: 200),
+          "deadline" => nullable_string(item["deadline"], "briefing_context.promised_deliverables.#{index}.deadline", errors, limit: 200),
+          "status" => nullable_string(item["status"], "briefing_context.promised_deliverables.#{index}.status", errors, limit: 300)
+        }
+      end
+
+      {
+        "agenda_items" => agenda,
+        "constraints" => normalize_string_list(constraints, limit: 500, max: 20),
+        "promised_deliverables" => normalized_deliverables,
+        "unresolved_questions" => normalize_string_list(questions, limit: 500, max: 20)
+      }
+    end
+
+    def empty_briefing_context
+      {"agenda_items" => [], "constraints" => [], "promised_deliverables" => [], "unresolved_questions" => []}
+    end
+
+    def string_list?(value)
+      value.is_a?(Array) && value.all? { |item| item.is_a?(String) }
+    end
+
+    def normalize_string_list(value, limit:, max:)
+      Array(value).filter_map { |item| item.is_a?(String) ? item.strip[0, limit] : nil }.reject(&:empty?).uniq.first(max)
     end
 
     def nullable_string(value, path, errors, limit:)

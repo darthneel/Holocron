@@ -3,6 +3,13 @@
 This document tracks live-model evaluations for scheduling-request extraction.
 It is intended to make model comparisons repeatable as the candidate set grows.
 
+The production contract is now `request-extraction-v2`. It adds structured
+briefing context for agenda decisions, ownership, authority, readiness,
+dependencies, constraints, deliverables, and unresolved questions. The results
+below are historical v1 measurements and should not be treated as v2 model
+selection evidence. The v2 fixture suite contains an additional decision-rich
+case and must be rerun before selecting a production model for the new contract.
+
 ## Current comparison
 
 Runs in this table used the same six fixtures, 39 deterministic assertions,

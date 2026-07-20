@@ -33,20 +33,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { FormEvent, useState } from "react";
+import { HolocronMark } from "./holocron-mark";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9292";
 const OFFICE_TIME_ZONE = "America/Denver";
-
-function HolocronMark() {
-  return (
-    <svg className="holocron-mark" viewBox="0 0 64 64" aria-hidden="true">
-      <path d="M46 8A24 24 0 0 0 46 56" />
-      <path d="M46 18A14 14 0 0 0 46 46" />
-      <path d="M46 27A5 5 0 0 0 46 37" />
-      <circle cx="53" cy="32" r="4.5" />
-    </svg>
-  );
-}
 
 type Session = {
   email: string;
@@ -172,6 +162,31 @@ type CandidateWindow = {
   notes: string;
 };
 
+type BriefingAgendaItem = {
+  topic: string | null;
+  ask: string | null;
+  decision_needed: string | null;
+  desired_outcome: string | null;
+  owner: string | null;
+  decision_maker: string | null;
+  deadline: string | null;
+  readiness_standard: string | null;
+  dependencies: string[];
+  evidence_excerpt: string | null;
+};
+
+type BriefingContext = {
+  agenda_items: BriefingAgendaItem[];
+  constraints: string[];
+  promised_deliverables: Array<{
+    deliverable: string;
+    owner: string | null;
+    deadline: string | null;
+    status: string | null;
+  }>;
+  unresolved_questions: string[];
+};
+
 type RelationshipPerson = {
   id: string;
   display_name: string;
@@ -245,6 +260,7 @@ type SchedulingRequest = {
   availability_notes: string | null;
   source_channel: string;
   original_request_text: string | null;
+  briefing_context: BriefingContext;
   assigned_scheduler: WorkspaceMember | null;
   participants: Participant[];
   candidate_windows: CandidateWindow[];
@@ -381,6 +397,7 @@ type RequestForm = {
   availability_notes: string;
   source_channel: string;
   original_request_text: string;
+  briefing_context: BriefingContext;
   assigned_scheduler_member_id: string;
   participants: Participant[];
   candidate_windows: CandidateWindow[];
@@ -413,6 +430,7 @@ type RequestExtraction = {
       ends_at: string | null;
       notes: string | null;
     }>;
+    briefing_context: BriefingContext;
     warnings: string[];
   } | null;
   warnings: string[];
@@ -588,6 +606,7 @@ function blankRequestForm(members: WorkspaceMember[]): RequestForm {
     availability_notes: "",
     source_channel: "email",
     original_request_text: "",
+    briefing_context: {agenda_items: [], constraints: [], promised_deliverables: [], unresolved_questions: []},
     assigned_scheduler_member_id: scheduler?.id ?? "",
     participants: [],
     candidate_windows: [],
@@ -604,6 +623,7 @@ function requestFormFromDetail(request: SchedulingRequest): RequestForm {
     availability_notes: request.availability_notes ?? "",
     source_channel: request.source_channel,
     original_request_text: request.original_request_text ?? "",
+    briefing_context: request.briefing_context,
     assigned_scheduler_member_id: request.assigned_scheduler?.id ?? "",
     participants: request.participants.map((participant) => ({
       name: participant.name,
@@ -632,6 +652,7 @@ function requestFormFromExtraction(extraction: RequestExtraction, inputText: str
     availability_notes: proposal.availability_notes ?? "",
     source_channel: "email",
     original_request_text: inputText.trim(),
+    briefing_context: proposal.briefing_context,
     participants: proposal.participants.map((participant) => ({
       name: participant.name ?? "",
       email: participant.email ?? "",
@@ -2008,7 +2029,7 @@ function RequestComposer({ form, extraction, formErrors, isSaving, isEditing, sc
 }) {
   return <form className="request-composer" onSubmit={onSave} noValidate>
     <div className="request-panel-head"><div><p className="eyebrow">{isEditing ? "Edit intake" : "New intake"}</p><h2>{isEditing ? "Update request" : "Create request"}</h2></div><button className="icon-button" type="button" onClick={onCancel} title="Close request editor"><X aria-hidden="true" /></button></div>
-    {extraction ? <div className="extraction-review-band"><Sparkles aria-hidden="true" /><div><strong>AI draft · Review before creating</strong><span>{extraction.provider} · {extraction.model} · {extraction.prompt_version}</span>{extraction.warnings.length > 0 ? <div className="extraction-warnings">{extraction.warnings.map((warning) => <small key={warning}>{warning}</small>)}</div> : null}</div></div> : null}
+    {extraction ? <div className="extraction-review-band"><Sparkles aria-hidden="true" /><div><strong>AI draft · Review before creating</strong><span>{extraction.provider} · {extraction.model} · {extraction.prompt_version}</span>{form.briefing_context.agenda_items.length > 0 ? <div className="extraction-warnings"><small>Briefing agenda captured</small>{form.briefing_context.agenda_items.map((item, index) => <small key={`${item.topic ?? "agenda"}-${index}`}><strong>{item.topic ?? `Agenda item ${index + 1}`}</strong>{item.ask ? ` · ${item.ask}` : item.decision_needed ? ` · ${item.decision_needed}` : ""}</small>)}</div> : null}{extraction.warnings.length > 0 ? <div className="extraction-warnings">{extraction.warnings.map((warning) => <small key={warning}>{warning}</small>)}</div> : null}</div></div> : null}
     {Object.keys(formErrors).length > 0 ? <p className="form-error form-error-summary" role="alert">{Object.values(formErrors).join(" ")}</p> : null}
     <fieldset className="request-fieldset"><legend>Requester</legend><div className="field-grid two"><Field label="Name" error={formErrors.requester_name}><input value={form.requester_name} onChange={(event) => onFieldChange("requester_name", event.target.value)} /></Field><Field label="Organization"><input value={form.requester_organization} onChange={(event) => onFieldChange("requester_organization", event.target.value)} /></Field><Field label="Email" error={formErrors.requester_email}><input type="email" value={form.requester_email} onChange={(event) => onFieldChange("requester_email", event.target.value)} /></Field><Field label="Source" error={formErrors.source_channel}><select value={form.source_channel} disabled={Boolean(extraction)} onChange={(event) => onFieldChange("source_channel", event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field></div></fieldset>
     <fieldset className="request-fieldset"><legend>Request</legend><div className="field-grid two"><Field label="Duration (minutes)" error={formErrors.requested_duration_minutes}><input type="number" min="15" max="480" step="15" value={form.requested_duration_minutes} onChange={(event) => onFieldChange("requested_duration_minutes", event.target.value)} /></Field><Field label="Assigned scheduler" error={formErrors.assigned_scheduler_member_id}><select value={form.assigned_scheduler_member_id} onChange={(event) => onFieldChange("assigned_scheduler_member_id", event.target.value)}>{schedulerMembers.map((member) => <option key={member.id} value={member.id}>{member.display_name} · {formatRole(member.role)}</option>)}</select></Field></div><Field label="Purpose" error={formErrors.purpose}><textarea rows={3} value={form.purpose} onChange={(event) => onFieldChange("purpose", event.target.value)} /></Field><Field label="Availability notes"><textarea rows={2} value={form.availability_notes} onChange={(event) => onFieldChange("availability_notes", event.target.value)} placeholder="Any useful context that does not fit a candidate window." /></Field><Field label="Original request text"><textarea rows={3} readOnly={Boolean(extraction)} value={form.original_request_text} onChange={(event) => onFieldChange("original_request_text", event.target.value)} /></Field></fieldset>

@@ -84,6 +84,12 @@ module Holocron
         if extraction
           normalized[:request][:source_channel] = "email"
           normalized[:request][:original_request_text] = extraction[:input_text]
+          unless attributes.key?("briefing_context")
+            proposal = extraction[:output_json] && JSON.parse(extraction[:output_json])
+            normalized[:request][:briefing_context_json] = JSON.generate(
+              normalize_briefing_context(proposal && proposal["briefing_context"], {})
+            )
+          end
         end
 
         Database.db[:scheduling_requests].insert(
@@ -152,7 +158,14 @@ module Holocron
     end
 
     def update(id:, attributes:, workspace:, actor:)
-      normalized = normalize(attributes, workspace: workspace)
+      existing = Database.db[:scheduling_requests].where(id: id, workspace_id: workspace[:id]).first
+      return nil unless existing
+
+      normalization_attributes = attributes.dup
+      unless normalization_attributes.key?("briefing_context")
+        normalization_attributes["briefing_context"] = parse_briefing_context(existing[:briefing_context_json])
+      end
+      normalized = normalize(normalization_attributes, workspace: workspace)
       expected_lock_version = Integer(attributes["expected_lock_version"], exception: false)
       unless expected_lock_version&.positive?
         raise ValidationError, {"expected_lock_version" => "Expected lock version must be a positive integer."}
@@ -246,6 +259,7 @@ module Holocron
         availability_notes: request[:availability_notes],
         source_channel: request[:source_channel],
         original_request_text: request[:original_request_text],
+        briefing_context: parse_briefing_context(request[:briefing_context_json]),
         assigned_scheduler: scheduler && serialize_member(scheduler),
         participants: participants,
         candidate_windows: candidate_windows,
@@ -287,7 +301,8 @@ module Holocron
         requested_duration_minutes: duration(attributes, errors),
         availability_notes: optional_text(attributes, "availability_notes", limit: 4_000),
         source_channel: source_channel(attributes, errors),
-        original_request_text: optional_text(attributes, "original_request_text", limit: 8_000)
+        original_request_text: optional_text(attributes, "original_request_text", limit: 8_000),
+        briefing_context_json: JSON.generate(normalize_briefing_context(attributes["briefing_context"], errors))
       }
       scheduler_id = assigned_scheduler_id(attributes, workspace, errors)
       participants = normalize_participants(attributes["participants"], errors)
@@ -296,6 +311,74 @@ module Holocron
       raise ValidationError, errors unless errors.empty?
 
       {request: request, assigned_scheduler_member_id: scheduler_id, participants: participants, candidate_windows: candidate_windows}
+    end
+
+    def normalize_briefing_context(value, errors)
+      return empty_briefing_context if value.nil?
+      unless value.is_a?(Hash)
+        errors["briefing_context"] = "Briefing context must be an object."
+        return empty_briefing_context
+      end
+
+      agenda = value["agenda_items"]
+      constraints = value["constraints"]
+      deliverables = value["promised_deliverables"]
+      questions = value["unresolved_questions"]
+      errors["briefing_context.agenda_items"] = "Agenda items must be a list." unless agenda.is_a?(Array)
+      errors["briefing_context.constraints"] = "Constraints must be a list of strings." unless string_list?(constraints)
+      errors["briefing_context.promised_deliverables"] = "Promised deliverables must be a list." unless deliverables.is_a?(Array)
+      errors["briefing_context.unresolved_questions"] = "Unresolved questions must be a list of strings." unless string_list?(questions)
+
+      normalized_agenda = Array(agenda).first(12).each_with_index.filter_map do |item, index|
+        unless item.is_a?(Hash)
+          errors["briefing_context.agenda_items.#{index}"] = "Agenda item must be an object."
+          next
+        end
+        dependencies = item["dependencies"]
+        errors["briefing_context.agenda_items.#{index}.dependencies"] = "Dependencies must be a list of strings." unless string_list?(dependencies)
+        normalized = %w[topic ask decision_needed desired_outcome owner decision_maker deadline readiness_standard evidence_excerpt].to_h do |key|
+          [key, optional_text(item, key, limit: 500)]
+        end
+        normalized["dependencies"] = normalized_string_list(dependencies, max: 12)
+        normalized
+      end
+
+      normalized_deliverables = Array(deliverables).first(12).each_with_index.filter_map do |item, index|
+        unless item.is_a?(Hash)
+          errors["briefing_context.promised_deliverables.#{index}"] = "Promised deliverable must be an object."
+          next
+        end
+        deliverable = optional_text(item, "deliverable", limit: 500)
+        unless deliverable
+          errors["briefing_context.promised_deliverables.#{index}.deliverable"] = "Deliverable is required."
+          next
+        end
+        {
+          "deliverable" => deliverable,
+          "owner" => optional_text(item, "owner", limit: 200),
+          "deadline" => optional_text(item, "deadline", limit: 200),
+          "status" => optional_text(item, "status", limit: 300)
+        }
+      end
+
+      {
+        "agenda_items" => normalized_agenda,
+        "constraints" => normalized_string_list(constraints, max: 20),
+        "promised_deliverables" => normalized_deliverables,
+        "unresolved_questions" => normalized_string_list(questions, max: 20)
+      }
+    end
+
+    def empty_briefing_context
+      {"agenda_items" => [], "constraints" => [], "promised_deliverables" => [], "unresolved_questions" => []}
+    end
+
+    def string_list?(value)
+      value.is_a?(Array) && value.all? { |item| item.is_a?(String) }
+    end
+
+    def normalized_string_list(value, max:)
+      Array(value).filter_map { |item| item.is_a?(String) ? item.strip[0, 500] : nil }.reject(&:empty?).uniq.first(max)
     end
 
     def request_extraction_id(attributes)
@@ -509,9 +592,11 @@ module Holocron
     end
 
     def audit_payload(normalized)
+      briefing_context = parse_briefing_context(normalized.dig(:request, :briefing_context_json))
       {
         requester_name: normalized.dig(:request, :requester_name),
         purpose: normalized.dig(:request, :purpose),
+        briefing_agenda_item_count: briefing_context.fetch("agenda_items").length,
         participant_count: normalized.fetch(:participants).length,
         candidate_window_count: normalized.fetch(:candidate_windows).length
       }
@@ -593,6 +678,13 @@ module Holocron
         organization: participant[:organization],
         role: participant[:role]
       }
+    end
+
+    def parse_briefing_context(value)
+      parsed = value && JSON.parse(value)
+      parsed.is_a?(Hash) ? empty_briefing_context.merge(parsed) : empty_briefing_context
+    rescue JSON::ParserError
+      empty_briefing_context
     end
 
     def serialize_candidate_window(window)

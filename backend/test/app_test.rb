@@ -141,12 +141,13 @@ class HolocronAppTest < Minitest::Test
     extraction = parsed_response
     assert_equal "succeeded", extraction.fetch("status")
     assert_equal "fake", extraction.fetch("provider")
-    assert_equal "request-extraction-v1", extraction.fetch("prompt_version")
+    assert_equal "request-extraction-v2", extraction.fetch("prompt_version")
     assert_equal "Priya Shah", extraction.dig("proposal", "requester", "name")
     assert_equal "priya.step6@example.org", extraction.dig("proposal", "requester", "email")
     assert_equal "Regional mobility briefing", extraction.dig("proposal", "purpose")
     assert_equal 45, extraction.dig("proposal", "requested_duration_minutes")
     assert_equal "2026-09-08", extraction.dig("proposal", "candidate_windows", 0, "candidate_date")
+    assert_equal "Regional mobility briefing", extraction.dig("proposal", "briefing_context", "agenda_items", 0, "topic")
     assert_equal request_count, Holocron::Database.db[:scheduling_requests].count
     assert_equal people_count, Holocron::Database.db[:people].count
     assert_equal organization_count, Holocron::Database.db[:organizations].count
@@ -189,6 +190,7 @@ class HolocronAppTest < Minitest::Test
     request = parsed_response
     assert_equal "email", request.fetch("source_channel")
     assert_equal extraction_email, request.fetch("original_request_text")
+    assert_equal proposal.fetch("briefing_context"), request.fetch("briefing_context")
     assert_equal extraction.fetch("id"), request.dig("request_extraction", "id")
     stored = Holocron::Database.db[:request_extractions].where(id: extraction.fetch("id")).first
     assert_equal request.fetch("id"), stored.fetch(:scheduling_request_id)
@@ -215,6 +217,68 @@ class HolocronAppTest < Minitest::Test
     assert_nil extraction.dig("proposal", "requested_duration_minutes")
     assert_includes extraction.fetch("warnings"), "Confirm the requester name."
     assert_includes extraction.fetch("warnings"), "Confirm the meeting duration."
+  end
+
+  def test_extraction_discards_unnamed_organization_as_a_participant
+    output = {
+      "requester" => {"name" => "Darius Holt", "email" => "dholt@cedargrovechamber.org", "organization" => "Cedar Grove Chamber of Commerce"},
+      "purpose" => "Quarterly small-business roundtable",
+      "requested_duration_minutes" => 45,
+      "availability_notes" => nil,
+      "participants" => [{"name" => nil, "email" => nil, "organization" => "City inspections team", "role" => "staff"}],
+      "candidate_windows" => [],
+      "briefing_context" => {"agenda_items" => [], "constraints" => [], "promised_deliverables" => [], "unresolved_questions" => ["Will an inspections decision-maker attend?"]},
+      "warnings" => []
+    }
+
+    normalized, errors, warnings = Holocron::RequestExtractions.normalize_output(output)
+
+    assert_empty errors
+    assert_empty normalized.fetch("participants")
+    assert_includes warnings, "Skipped an extracted participant without a name; confirm attendees manually."
+  end
+
+  def test_extraction_enriches_known_workspace_members_with_office_organization
+    workspace = Holocron::Database.db[:workspaces].where(slug: "cedar-grove-mayor").first
+    output = {
+      "requester" => {"name" => "Darius Holt", "email" => "dholt@cedargrovechamber.org", "organization" => nil},
+      "purpose" => "Quarterly small-business roundtable",
+      "requested_duration_minutes" => 45,
+      "availability_notes" => nil,
+      "participants" => [
+        {"name" => "Elena Park", "email" => "mayor@cedargrove.gov", "organization" => nil, "role" => "required"},
+        {"name" => "Sam Rivera", "email" => nil, "organization" => nil, "role" => "staff"}
+      ],
+      "candidate_windows" => [],
+      "briefing_context" => {"agenda_items" => [], "constraints" => [], "promised_deliverables" => [], "unresolved_questions" => []},
+      "warnings" => []
+    }
+
+    normalized, errors, = Holocron::RequestExtractions.normalize_output(output, workspace: workspace)
+
+    assert_empty errors
+    assert_equal "Cedar Grove Mayor's Office", normalized.dig("participants", 0, "organization")
+    assert_equal "Cedar Grove Mayor's Office", normalized.dig("participants", 1, "organization")
+    assert_equal "sam.rivera@cedargrove.gov", normalized.dig("participants", 1, "email")
+  end
+
+  def test_extraction_recovers_natural_language_mountain_time_candidate_windows
+    input = <<~EMAIL.strip
+      From: Darius Holt <dholt@cedargrovechamber.org>
+      Subject: Next quarterly small-business roundtable
+
+      I am flexible on Thursday, August 20, or Saturday, August 22, between 10:00 a.m. and noon Mountain Time.
+    EMAIL
+
+    post_json "/api/request-extractions", {input_text: input}, actor_headers
+
+    assert_equal 201, last_response.status
+    windows = parsed_response.dig("proposal", "candidate_windows")
+    assert_equal ["2026-08-20", "2026-08-22"], windows.map { |window| window.fetch("candidate_date") }
+    assert_equal "2026-08-20T10:00:00-06:00", windows[0].fetch("starts_at")
+    assert_equal "2026-08-20T12:00:00-06:00", windows[0].fetch("ends_at")
+    assert_equal "2026-08-22T10:00:00-06:00", windows[1].fetch("starts_at")
+    assert_equal "2026-08-22T12:00:00-06:00", windows[1].fetch("ends_at")
   end
 
   def test_malformed_refused_and_transient_extractions_are_recorded
@@ -481,6 +545,26 @@ class HolocronAppTest < Minitest::Test
     assert_equal 2, updated.fetch("lock_version")
     assert_equal "scheduling_request.updated", updated.fetch("audit_events").first.fetch("event_type")
     assert_equal audit_count_after_create + 1, Holocron::Database.db[:audit_events].count
+  end
+
+  def test_legacy_update_payload_preserves_briefing_context
+    context = {
+      agenda_items: [{
+        topic: "Permit decision", ask: "Approve the permit", decision_needed: nil,
+        desired_outcome: nil, owner: nil, decision_maker: "Mayor Park", deadline: nil,
+        readiness_standard: nil, dependencies: [], evidence_excerpt: "Please approve the permit."
+      }],
+      constraints: [], promised_deliverables: [], unresolved_questions: []
+    }
+    created = create_scheduling_request(briefing_context: context)
+
+    patch_json "/api/scheduling-requests/#{created.fetch('id')}", scheduling_request_payload(
+      purpose: "Updated without the v2 field",
+      expected_lock_version: created.fetch("lock_version")
+    ), actor_headers
+
+    assert last_response.ok?
+    assert_equal context.fetch(:agenda_items).first.fetch(:topic), parsed_response.dig("briefing_context", "agenda_items", 0, "topic")
   end
 
   def test_request_entity_resolution_uses_email_and_never_name_alone
@@ -1292,6 +1376,38 @@ class HolocronAppTest < Minitest::Test
     assert_match(/do not\s+merely restate a desired outcome in question form/, prompt.fetch(:instructions))
     assert_match(/missing owner, decision authority, attendee, current status/, prompt.fetch(:instructions))
     assert_match(/compare open_questions\s+with desired_outcomes/, prompt.fetch(:instructions))
+  end
+
+  def test_briefing_manifest_preserves_structured_request_decisions
+    context = {
+      agenda_items: [{
+        topic: "Opening date",
+        ask: "Approve the October 12 opening date.",
+        decision_needed: "Whether to open on October 12",
+        desired_outcome: "A confirmed public opening date",
+        owner: nil,
+        decision_maker: "Mayor Park",
+        deadline: "October 5",
+        readiness_standard: "Occupancy permit and traffic plan approved",
+        dependencies: ["Fire inspection passes"],
+        evidence_excerpt: "We need the Mayor to approve the October 12 opening date."
+      }],
+      constraints: ["Budget is capped at $75,000."],
+      promised_deliverables: [{deliverable: "Revised traffic plan", owner: "Carlos Vega", deadline: "September 30", status: nil}],
+      unresolved_questions: ["Will the Fire Marshal attend?"]
+    }
+    briefing = create_briefing(briefing_context: context)
+    db = Holocron::Database.db
+    stored_briefing = db[:briefings].where(id: briefing.fetch("id")).first
+    workspace = db[:workspaces].where(id: stored_briefing.fetch(:workspace_id)).first
+
+    manifest = Holocron::BriefingContextAssembler.new(workspace: workspace).call(briefing: stored_briefing)
+    request_source = manifest.fetch("sources").find { |source| source.fetch("source_type") == "scheduling_request" }
+
+    assert_equal "Opening date", request_source.dig("facts", "briefing_context", "agenda_items", 0, "topic")
+    assert_equal "Mayor Park", request_source.dig("facts", "briefing_context", "agenda_items", 0, "decision_maker")
+    assert_equal ["Budget is capped at $75,000."], request_source.dig("facts", "briefing_context", "constraints")
+    assert_includes manifest.dig("section_source_refs", "open_questions"), request_source.fetch("source_ref")
   end
 
   def test_grounded_generation_caps_prior_interactions_per_person

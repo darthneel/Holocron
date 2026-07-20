@@ -50,6 +50,23 @@ module Holocron
               "availability_notes" => availability,
               "participants" => participants,
               "candidate_windows" => candidate_windows,
+              "briefing_context" => {
+                "agenda_items" => [{
+                  "topic" => purpose,
+                  "ask" => purpose,
+                  "decision_needed" => nil,
+                  "desired_outcome" => nil,
+                  "owner" => nil,
+                  "decision_maker" => nil,
+                  "deadline" => nil,
+                  "readiness_standard" => nil,
+                  "dependencies" => [],
+                  "evidence_excerpt" => purpose
+                }],
+                "constraints" => [],
+                "promised_deliverables" => [],
+                "unresolved_questions" => []
+              },
               "warnings" => warnings
             },
             model: model,

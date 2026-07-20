@@ -76,6 +76,7 @@ erDiagram
         text availability_notes "nullable"
         source_channel source_channel
         text original_request_text "nullable"
+        jsonb briefing_context
         request_status status
         integer lock_version
         timestamptz created_at
@@ -338,6 +339,12 @@ fails. Validation errors and warnings remain separate so incomplete but valid
 proposals can be reviewed. `scheduling_request_id` and `accepted_at` are both null
 until acceptance, then both are set in the scheduling-request transaction. The
 unique request link ensures one extraction cannot create multiple requests.
+`scheduling_requests.briefing_context` preserves the reviewed v2 intake structure:
+agenda items and their evidence excerpts, explicit asks and decisions, owners and
+decision-makers, deadlines, readiness standards, dependencies, constraints,
+promised deliverables, and unresolved questions. It is stored as application-
+validated JSON so existing requests can default to an empty context while the
+contract evolves without flattening decision detail back into `purpose`.
 
 Semantic documents are a derived, replaceable index rather than authoritative
 domain records. Every interaction has one `overview` unit. Long interactions may

@@ -109,13 +109,16 @@ The fourth slot should be used when an explicit agenda or authority gap remains 
 
 ### Compact meeting ask and non-repetitive questions
 
-Prompt version `action-briefing-v5` tightens the output contract without changing retrieval or model context:
+Prompt version `action-briefing-v5` tightens the output contract. Context version
+`briefing-context-v10` now also supplies reviewed, structured request decisions,
+asks, ownership and authority, readiness standards, dependencies, constraints,
+deliverables, unresolved questions, and their intake evidence excerpts:
 
 - `meeting_ask` must contain exactly one compact item combining the meeting purpose and concrete ask. This prevents the model from spending separate items on two versions of the same setup.
 - An open question may overlap a desired outcome only when it identifies a specific unresolved owner, decision authority, attendee, current status, deadline completion, location, readiness standard, approval path, or operating commitment.
 - Before returning output, the model must compare `open_questions` with `desired_outcomes` and remove or rewrite questions that merely convert an outcome into question form.
 
-The application enforces the one-item meeting-ask limit structurally. Open-question deduplication remains a prompt-level semantic rule: a lexical-overlap validator could incorrectly reject a legitimate pair in which an outcome names a decision and its corresponding question asks for the missing approval or authority. The expected result is less output repetition and a modest output-token reduction with no additional retrieval, embeddings, or source data.
+The application enforces the one-item meeting-ask limit structurally. Open-question deduplication remains a prompt-level semantic rule: a lexical-overlap validator could incorrectly reject a legitimate pair in which an outcome names a decision and its corresponding question asks for the missing approval or authority. The expected result is less output repetition and stronger agenda coverage. V10 adds a small amount of structured request-source data but requires no additional retrieval calls or embeddings.
 
 ## 4. Observed v23 to v25 result
 

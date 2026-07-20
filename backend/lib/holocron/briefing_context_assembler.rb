@@ -7,7 +7,7 @@ require_relative "semantic_index"
 
 module Holocron
   class BriefingContextAssembler
-    CONTEXT_VERSION = "briefing-context-v9"
+    CONTEXT_VERSION = "briefing-context-v10"
     RETRIEVAL_STRATEGIES = %w[linked_recency semantic hybrid fused].freeze
     MAX_PEOPLE = 12
     MAX_CURRENT_INTERACTIONS_PER_PERSON = 2
@@ -440,10 +440,12 @@ module Holocron
     end
 
     def semantic_query(request, meeting)
+      briefing_context = parse_briefing_context(request[:briefing_context_json])
       [
         meeting[:title],
         request[:purpose],
         request[:availability_notes],
+        briefing_context_text(briefing_context),
         request[:original_request_text]
       ].compact.join("\n")
     end
@@ -480,6 +482,7 @@ module Holocron
     end
 
     def request_source(request, candidate_windows)
+      briefing_context = parse_briefing_context(request[:briefing_context_json])
       candidates = candidate_windows.map do |window|
         {
           "candidate_date" => window[:candidate_date],
@@ -495,6 +498,7 @@ module Holocron
         "purpose" => bounded(request[:purpose], 2_000),
         "requested_duration_minutes" => request[:requested_duration_minutes],
         "availability_notes" => bounded(request[:availability_notes], 1_500),
+        "briefing_context" => briefing_context,
         "candidate_windows" => candidates
       }
       source(
@@ -504,6 +508,25 @@ module Holocron
         excerpt: [facts["purpose"], "#{facts['requested_duration_minutes']} minutes", facts["availability_notes"]].compact.join(" | "),
         facts: facts
       )
+    end
+
+    def parse_briefing_context(value)
+      parsed = value && JSON.parse(value)
+      parsed.is_a?(Hash) ? parsed : {}
+    rescue JSON::ParserError
+      {}
+    end
+
+    def briefing_context_text(context)
+      Array(context["agenda_items"]).flat_map do |item|
+        next [] unless item.is_a?(Hash)
+
+        %w[topic ask decision_needed desired_outcome owner decision_maker deadline readiness_standard dependencies evidence_excerpt]
+          .flat_map { |key| Array(item[key]) }
+      end.concat(Array(context["constraints"]))
+        .concat(Array(context["promised_deliverables"]).flat_map { |item| item.is_a?(Hash) ? item.values : [] })
+        .concat(Array(context["unresolved_questions"]))
+        .compact.join("\n")
     end
 
     def meeting_source(meeting)
