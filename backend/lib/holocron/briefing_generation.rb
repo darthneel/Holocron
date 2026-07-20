@@ -5,7 +5,7 @@ require_relative "ai/model_router"
 
 module Holocron
   module BriefingGeneration
-    PROMPT_VERSION = "action-briefing-v4"
+    PROMPT_VERSION = "action-briefing-v5"
     SECTION_DEFINITIONS = {
       "meeting_snapshot" => "Meeting snapshot",
       "meeting_ask" => "Why this meeting",
@@ -17,7 +17,7 @@ module Holocron
     }.freeze
     MODEL_SECTION_TYPES = SECTION_DEFINITIONS.keys - ["meeting_snapshot"]
     SECTION_ITEM_LIMITS = {
-      "meeting_ask" => 1..2,
+      "meeting_ask" => 1..1,
       "desired_outcomes" => 2..4,
       "decision_context" => 0..4,
       "talking_points" => 2..5,
@@ -112,7 +112,8 @@ module Holocron
           may support asks and recommendations but never prior decision context. Do not repeat the same
           fact in multiple sections.
 
-          meeting_ask (1-2 items): state the concrete reason for the meeting and the ask.
+          meeting_ask (exactly 1 item): combine the concrete reason for the meeting and its ask into one
+          compact item. Do not split the purpose and ask into separate items.
           desired_outcomes (2-4 items): describe specific decisions, commitments, owners, or next steps to seek.
           decision_context (0-4 items): synthesize only history that changes how the principal should approach
           this meeting; group recurring history into themes instead of listing events chronologically.
@@ -126,6 +127,13 @@ module Holocron
           deliverables; and only then (4) secondary opportunities from prior history. Use the fourth question when
           any requested decision or necessary decision-maker remains uncovered. Do not let a secondary historical
           opportunity displace an explicit agenda or attendance gap.
+
+          An open question must identify a specific unresolved fact needed to execute a desired outcome; do not
+          merely restate a desired outcome in question form. Every open question must explicitly identify at least
+          one missing owner, decision authority, attendee, current status, deadline completion, location, readiness
+          standard, approval path, or operating commitment. Before returning the output, compare open_questions
+          with desired_outcomes and remove or rewrite any question that repeats an outcome without adding one of
+          those specific gaps.
 
           Recommendations must be framed as recommendations, not established facts. A factual item
           requires a citation. An open question may have no citation when it explicitly identifies

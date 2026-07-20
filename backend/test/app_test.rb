@@ -794,7 +794,7 @@ class HolocronAppTest < Minitest::Test
     refute_nil audit
     payload = JSON.parse(audit.fetch(:payload))
     assert_equal "fake", payload.fetch("provider")
-    assert_equal "action-briefing-v4", payload.fetch("prompt_version")
+    assert_equal "action-briefing-v5", payload.fetch("prompt_version")
     assert_equal 2, payload.fetch("version_number")
     assert_operator payload.dig("retrieval", "source_count"), :>=, 4
     assert_equal audit_count + 1, Holocron::Database.db[:audit_events].count
@@ -1285,9 +1285,13 @@ class HolocronAppTest < Minitest::Test
     })
 
     assert_equal 3..4, Holocron::BriefingGeneration::SECTION_ITEM_LIMITS.fetch("open_questions")
+    assert_equal 1..1, Holocron::BriefingGeneration::SECTION_ITEM_LIMITS.fetch("meeting_ask")
     assert_match(/every decision area explicitly requested/, prompt.fetch(:instructions))
     assert_match(/missing stakeholder attendance/, prompt.fetch(:instructions))
     assert_match(/Do not let a secondary historical\s+opportunity displace/, prompt.fetch(:instructions))
+    assert_match(/do not\s+merely restate a desired outcome in question form/, prompt.fetch(:instructions))
+    assert_match(/missing owner, decision authority, attendee, current status/, prompt.fetch(:instructions))
+    assert_match(/compare open_questions\s+with desired_outcomes/, prompt.fetch(:instructions))
   end
 
   def test_grounded_generation_caps_prior_interactions_per_person

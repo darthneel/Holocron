@@ -98,7 +98,7 @@ The compact boundary map is now included in the model payload, and the prompt id
 
 ### Agenda-aware open questions
 
-Prompt version `action-briefing-v4` requires three to four open questions and prioritizes them in this order:
+Prompt version `action-briefing-v4` introduced three to four open questions and prioritized them in this order:
 
 1. Explicitly requested decisions lacking a confirmed location, owner, readiness standard, or commitment.
 2. Missing stakeholder attendance or decision authority.
@@ -106,6 +106,16 @@ Prompt version `action-briefing-v4` requires three to four open questions and pr
 4. Secondary opportunities found in prior history.
 
 The fourth slot should be used when an explicit agenda or authority gap remains uncovered. This is intended to recover questions about clean-air-room ownership/readiness and the presence of Transit or facilities decision-makers without expanding retrieval or the context manifest.
+
+### Compact meeting ask and non-repetitive questions
+
+Prompt version `action-briefing-v5` tightens the output contract without changing retrieval or model context:
+
+- `meeting_ask` must contain exactly one compact item combining the meeting purpose and concrete ask. This prevents the model from spending separate items on two versions of the same setup.
+- An open question may overlap a desired outcome only when it identifies a specific unresolved owner, decision authority, attendee, current status, deadline completion, location, readiness standard, approval path, or operating commitment.
+- Before returning output, the model must compare `open_questions` with `desired_outcomes` and remove or rewrite questions that merely convert an outcome into question form.
+
+The application enforces the one-item meeting-ask limit structurally. Open-question deduplication remains a prompt-level semantic rule: a lexical-overlap validator could incorrectly reject a legitimate pair in which an outcome names a decision and its corresponding question asks for the missing approval or authority. The expected result is less output repetition and a modest output-token reduction with no additional retrieval, embeddings, or source data.
 
 ## 4. Observed v23 to v25 result
 

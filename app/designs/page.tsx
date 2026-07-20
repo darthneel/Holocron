@@ -7,7 +7,7 @@ type ProductView = "requests" | "briefings";
 type Theme = "dark" | "light";
 type Concept = {
   id: string;
-  family: "Foundation" | "Minimalist" | "Industrial" | "High-End";
+  family: "Foundation" | "Minimalist" | "Industrial" | "High-End" | "Inspired";
   title: string;
   subtitle: string;
   description: string;
@@ -55,6 +55,7 @@ const concepts: Concept[] = [
   {id: "operations-array", family: "Industrial", title: "Operations Array", subtitle: "Routing terminal", description: "A dense phosphor matrix for scanning every request, meeting fact, and briefing state."},
   {id: "aperture", family: "High-End", title: "Aperture", subtitle: "Cinematic workbench", description: "The workbench becomes a full-bleed briefing room with one primary glass action surface."},
   {id: "parlor", family: "High-End", title: "Parlor", subtitle: "Sculptural workspace", description: "A cold-luxury planning room built from floating briefing shelves and a staged agenda."},
+  {id: "magic-patterns", family: "Inspired", title: "Magic Patterns", subtitle: "Chief of staff workspace", description: "A calm editorial workspace pairing warm amber actions with focused request and briefing panes."},
 ];
 
 const requests: RequestRecord[] = [
@@ -203,6 +204,62 @@ function BriefingDetail({briefing}: {briefing: BriefingRecord}) {
   </article>;
 }
 
+function MagicPatternsWorkspace({view, selectedRequestId, setSelectedRequestId, selectedBriefingId, setSelectedBriefingId}: {
+  view: ProductView;
+  selectedRequestId: string;
+  setSelectedRequestId: (id: string) => void;
+  selectedBriefingId: string;
+  setSelectedBriefingId: (id: string) => void;
+}) {
+  const selectedBriefing = briefings.find((briefing) => briefing.id === selectedBriefingId) ?? briefings[0];
+
+  return <div className="magic-app">
+    <aside className="magic-sidebar">
+      <div className="magic-brand"><b>✦</b><span><strong>Holocron</strong><small>Your principal operations system</small></span></div>
+      <nav aria-label="Magic Patterns workspace sections">
+        <button type="button"><span>OV</span>Overview</button>
+        <button type="button" className={view === "requests" ? "is-active" : ""}><span>SC</span>Scheduling</button>
+        <button type="button" className={view === "briefings" ? "is-active" : ""}><span>BR</span>Briefings</button>
+        <button type="button"><span>RL</span>Relationships</button>
+      </nav>
+      <footer><b>NP</b><span><strong>Neel</strong><small>Workspace owner</small></span></footer>
+    </aside>
+    <header className="magic-header">
+      <div><h1>{view === "requests" ? "Scheduling" : "Briefings"}</h1><p>{view === "requests" ? "Intake, triage, and schedule every request in one place." : "AI-prepared context, ready before you walk into the room."}</p></div>
+      <time>Monday, July 20</time>
+    </header>
+    <main className={`magic-main magic-${view}`}>
+      {view === "requests" ? <>
+        <div className="magic-request-tools">
+          <div className="magic-filters" aria-label="Request status filters"><button className="is-active" type="button">All <span>4</span></button><button type="button">New <span>2</span></button><button type="button">Triaged <span>0</span></button><button type="button">Scheduled <span>2</span></button><button type="button">Declined <span>0</span></button></div>
+          <button className="magic-primary" type="button">+ New request</button>
+        </div>
+        <section className="magic-request-stack" aria-label="Scheduling requests">
+          {requests.map((request) => <article className={selectedRequestId === request.id ? "is-selected" : ""} key={request.id}>
+            <button className="magic-request-select" type="button" onClick={() => setSelectedRequestId(request.id)}>
+              <span className="magic-record-icon">{request.source.slice(0, 1)}</span>
+              <span className="magic-request-copy"><span className="magic-request-title"><strong>{request.purpose}</strong><Status value={request.status} /></span><small>{request.requester} · {request.organization} · {request.duration} min · {request.updated}</small><span>{request.availability}</span></span>
+            </button>
+            <footer><p><b>✦ Suggested:</b> {request.windows[0].date}, {request.windows[0].time}</p><div><button type="button">× Decline</button><button type="button" className="magic-schedule">✓ Schedule</button></div></footer>
+          </article>)}
+        </section>
+      </> : <div className="magic-briefing-workspace">
+        <aside className="magic-briefing-list" aria-label="Briefing inbox">
+          <button className="magic-generate" type="button">✦ Generate a briefing</button>
+          {briefings.map((briefing) => <button type="button" className={selectedBriefing.id === briefing.id ? "is-selected" : ""} key={briefing.id} onClick={() => setSelectedBriefingId(briefing.id)}><span className="magic-record-icon">B</span><span><strong>{briefing.title}</strong><small>{briefing.requester} · {briefing.organization}</small><span><Status value={briefing.status} /><time>For {briefing.date}</time></span></span></button>)}
+        </aside>
+        <article className="magic-briefing-detail">
+          <header><span>Meeting brief</span><h2>{selectedBriefing.title}</h2><p>Meeting with {selectedBriefing.requester} · {selectedBriefing.organization}</p><div><Status value={selectedBriefing.status} /><time>For {selectedBriefing.date} · updated 8:30 AM</time></div></header>
+          <section><h3>Why this matters</h3><p>{selectedBriefing.overview}</p></section>
+          <section><h3>Since you last spoke</h3>{selectedBriefing.history.map((item) => <p key={item}>{item}</p>)}</section>
+          <section><h3>Recommended talking points</h3><ul>{selectedBriefing.objectives.map((item) => <li key={item}>{item}</li>)}</ul></section>
+          <section><h3>Known limitations</h3><ul>{selectedBriefing.limitations.map((item) => <li key={item}>{item}</li>)}</ul></section>
+        </article>
+      </div>}
+    </main>
+  </div>;
+}
+
 function Workbench({concept, view, setView, selectedRequestId, setSelectedRequestId, selectedBriefingId, setSelectedBriefingId}: {
   concept: Concept;
   view: ProductView;
@@ -236,11 +293,11 @@ export default function DesignExplorationsPage() {
   const activeConcept = concepts.find((concept) => concept.id === activeId) ?? concepts[0];
 
   return <main className={`design-gallery theme-${theme}`}>
-    <header className="gallery-header"><div><p className="gallery-kicker">Holocron product directions</p><h1>One real workspace. Eight designs.</h1></div><p>Compare the actual Requests and Briefings workbench across every visual direction and both themes.</p></header>
+    <header className="gallery-header"><div><p className="gallery-kicker">Holocron product directions</p><h1>One real workspace. Nine designs.</h1></div><p>Compare the actual Requests and Briefings workbench across every visual direction and both themes.</p></header>
     <section className="gallery-controls" aria-label="Preview controls"><div><span>Page</span><button type="button" className={view === "requests" ? "is-selected" : ""} onClick={() => setView("requests")}>Requests</button><button type="button" className={view === "briefings" ? "is-selected" : ""} onClick={() => setView("briefings")}>Briefings</button></div><div><span>Appearance</span><button type="button" className={theme === "light" ? "is-selected" : ""} aria-pressed={theme === "light"} onClick={() => setTheme("light")}>Light</button><button type="button" className={theme === "dark" ? "is-selected" : ""} aria-pressed={theme === "dark"} onClick={() => setTheme("dark")}>Dark</button></div></section>
     <nav className="concept-picker" aria-label="Design concepts">{concepts.map((concept) => <button key={concept.id} type="button" className={concept.id === activeConcept.id ? "is-selected" : ""} onClick={() => setActiveId(concept.id)}><span>{concept.family}</span><strong>{concept.title}</strong></button>)}</nav>
     <section className="concept-context" aria-live="polite"><div><span>{activeConcept.family} direction</span><h2>{activeConcept.title}</h2></div><p>{activeConcept.description}</p></section>
-    <section className={`concept-frame concept-${activeConcept.id} theme-${theme}`}><Topline concept={activeConcept} theme={theme} /><Workbench concept={activeConcept} view={view} setView={setView} selectedRequestId={selectedRequestId} setSelectedRequestId={setSelectedRequestId} selectedBriefingId={selectedBriefingId} setSelectedBriefingId={setSelectedBriefingId} /></section>
+    <section className={`concept-frame concept-${activeConcept.id} theme-${theme}`}>{activeConcept.id === "magic-patterns" ? <MagicPatternsWorkspace view={view} selectedRequestId={selectedRequestId} setSelectedRequestId={setSelectedRequestId} selectedBriefingId={selectedBriefingId} setSelectedBriefingId={setSelectedBriefingId} /> : <><Topline concept={activeConcept} theme={theme} /><Workbench concept={activeConcept} view={view} setView={setView} selectedRequestId={selectedRequestId} setSelectedRequestId={setSelectedRequestId} selectedBriefingId={selectedBriefingId} setSelectedBriefingId={setSelectedBriefingId} /></>}</section>
     <footer className="gallery-footer">These previews use the current Cedar Grove seed records and the real Holocron workspace information architecture.</footer>
   </main>;
 }
