@@ -213,13 +213,13 @@ different model.
 ## Deployment
 
 Production is configured to run on Render in Oregon as two independently
-deployed Starter web services. `holocron-web` serves the vinext frontend and
+deployed Starter web services. `holocron` serves the vinext frontend and
 calls `holocron-api` over HTTPS. Only the API connects to the existing Neon US
 West PostgreSQL database; the Blueprint does not create a Render Postgres
 resource.
 
 ```text
-Browser -> holocron-web -> holocron-api -> existing Neon database
+Browser -> holocron -> holocron-api -> existing Neon database
 ```
 
 Both services deploy from the `production` branch using the root-level
@@ -240,7 +240,7 @@ in the Render dashboard when creating the Blueprint:
 The API runtime uses `DATABASE_URL`; the pre-deploy migration temporarily uses
 `MIGRATION_DATABASE_URL`. The frontend receives the public
 `NEXT_PUBLIC_API_URL=https://holocron-api-fctr.onrender.com` value at build time,
-and the API allows `https://holocron-web.onrender.com` through
+and the API allows `https://holocron.onrender.com` through
 `FRONTEND_ORIGINS`. The API service is named `holocron-api`; Render assigned the
 public slug `holocron-api-fctr` because the shorter global hostname was already
 unavailable.
