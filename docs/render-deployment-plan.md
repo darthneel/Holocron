@@ -47,7 +47,8 @@ The initial deployment decisions are confirmed:
 | Request extraction | Vercel AI Gateway with `openai/gpt-5.6-luna` |
 | Briefing generation | Vercel AI Gateway with `openai/gpt-5.6-terra` |
 | Embeddings | Vercel AI Gateway with `openai/text-embedding-3-small` |
-| Initial public URLs | Render-provided `onrender.com` domains |
+| Frontend public URL | `https://holocron-web.onrender.com` |
+| API public URL | `https://holocron-api-fctr.onrender.com` |
 | Custom domains | None planned |
 
 Create the `production` branch from the verified release commit before connecting
@@ -217,7 +218,7 @@ Configure these on `holocron-web`:
 
 ```env
 NODE_VERSION=22.22.0
-NEXT_PUBLIC_API_URL=https://holocron-api.onrender.com
+NEXT_PUBLIC_API_URL=https://holocron-api-fctr.onrender.com
 ```
 
 `NEXT_PUBLIC_API_URL` is embedded during the frontend build. Any change to it requires rebuilding the frontend service.
@@ -227,9 +228,12 @@ NEXT_PUBLIC_API_URL=https://holocron-api.onrender.com
 No custom domain is planned. The production deployment will use:
 
 - `https://holocron-web.onrender.com`
-- `https://holocron-api.onrender.com`
+- `https://holocron-api-fctr.onrender.com`
 
-If the desired Render subdomains are unavailable, stop the deployment and choose replacement service names before configuring `FRONTEND_ORIGINS` or `NEXT_PUBLIC_API_URL`.
+The API service is still named `holocron-api`. Render assigned the public slug
+`holocron-api-fctr` because the shorter global hostname was unavailable. Keep
+the assigned hostname in `NEXT_PUBLIC_API_URL`; the frontend URL remains the
+allowed `FRONTEND_ORIGINS` value.
 
 ## Phase 4: First Deployment
 
@@ -249,7 +253,7 @@ If the desired Render subdomains are unavailable, stop the deployment and choose
 
 Perform these checks in order:
 
-1. `GET https://holocron-api.onrender.com/health` returns HTTP 200.
+1. `GET https://holocron-api-fctr.onrender.com/health` returns HTTP 200.
 2. The frontend email-entry page renders.
 3. A known workspace member can open the workspace.
 4. The request list loads and an existing request opens.
@@ -261,6 +265,21 @@ Perform these checks in order:
 10. Existing Neon record counts remain consistent with the pre-deployment check.
 
 Avoid creating permanent test records during the first smoke test because the application does not currently expose a delete workflow.
+
+### Deployment result — July 21, 2026
+
+- Blueprint commit: `3899545` on `production`.
+- `holocron-api` is live on Starter in Oregon at
+  `https://holocron-api-fctr.onrender.com`.
+- `holocron-web` is live on Starter in Oregon at
+  `https://holocron-web.onrender.com`.
+- The Blueprint created no Render database; the API uses the existing Neon US
+  West database with pooled runtime and direct migration connections.
+- The final API pre-deploy migration and both final service deploys succeeded.
+- Health, CORS, `Server-Timing`, workspace entry, request loading, briefing
+  loading, briefing count, and Sources open/close smoke checks passed.
+- Post-release logs contained no application errors or HTTP 5xx responses.
+- Render compute is two $7 Starter services, totaling $14 per month.
 
 ## Phase 6: Operational Setup
 

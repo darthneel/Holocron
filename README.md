@@ -239,10 +239,11 @@ in the Render dashboard when creating the Blueprint:
 
 The API runtime uses `DATABASE_URL`; the pre-deploy migration temporarily uses
 `MIGRATION_DATABASE_URL`. The frontend receives the public
-`NEXT_PUBLIC_API_URL=https://holocron-api.onrender.com` value at build time, and
-the API allows `https://holocron-web.onrender.com` through `FRONTEND_ORIGINS`.
-If either Render service name is unavailable, choose both final names and update
-these two URL values before deploying.
+`NEXT_PUBLIC_API_URL=https://holocron-api-fctr.onrender.com` value at build time,
+and the API allows `https://holocron-web.onrender.com` through
+`FRONTEND_ORIGINS`. The API service is named `holocron-api`; Render assigned the
+public slug `holocron-api-fctr` because the shorter global hostname was already
+unavailable.
 
 Do not configure `TEST_DATABASE_URL` in production. Never run `db:create`,
 `db:setup`, or `db:seed` against the production Neon database.

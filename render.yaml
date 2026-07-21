@@ -80,4 +80,4 @@ services:
         - render.yaml
     envVars:
       - key: NEXT_PUBLIC_API_URL
-        value: https://holocron-api.onrender.com
+        value: https://holocron-api-fctr.onrender.com
