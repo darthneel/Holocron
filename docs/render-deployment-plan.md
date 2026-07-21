@@ -40,14 +40,14 @@ The initial deployment decisions are confirmed:
 
 | Decision | Selection |
 | --- | --- |
-| Frontend service name | `holocron` |
+| Frontend service name | `holocron-web` |
 | API service name | `holocron-api` |
 | Render region | `oregon`, matching the Neon US West location |
 | Production Git branch | `production` |
 | Request extraction | Vercel AI Gateway with `openai/gpt-5.6-luna` |
 | Briefing generation | Vercel AI Gateway with `openai/gpt-5.6-terra` |
 | Embeddings | Vercel AI Gateway with `openai/text-embedding-3-small` |
-| Frontend public URL | `https://holocron.onrender.com` |
+| Frontend public URL | `https://holocron-web.onrender.com` |
 | API public URL | `https://holocron-api-fctr.onrender.com` |
 | Custom domains | None planned |
 
@@ -195,7 +195,7 @@ DATABASE_CONNECTION_VALIDATION_TIMEOUT=30
 PUMA_MIN_THREADS=1
 PUMA_MAX_THREADS=5
 WEB_CONCURRENCY=0
-FRONTEND_ORIGINS=https://holocron.onrender.com
+FRONTEND_ORIGINS=https://holocron-web.onrender.com
 ```
 
 Configure the current AI provider and models on Render:
@@ -214,7 +214,7 @@ Do not configure `TEST_DATABASE_URL` in production.
 
 ### Frontend Variables
 
-Configure these on `holocron`:
+Configure these on `holocron-web`:
 
 ```env
 NODE_VERSION=22.22.0
@@ -227,7 +227,7 @@ NEXT_PUBLIC_API_URL=https://holocron-api-fctr.onrender.com
 
 No custom domain is planned. The production deployment will use:
 
-- `https://holocron.onrender.com`
+- `https://holocron-web.onrender.com`
 - `https://holocron-api-fctr.onrender.com`
 
 The API service is still named `holocron-api`. Render assigned the public slug
@@ -271,8 +271,8 @@ Avoid creating permanent test records during the first smoke test because the ap
 - Blueprint commit: `3899545` on `production`.
 - `holocron-api` is live on Starter in Oregon at
   `https://holocron-api-fctr.onrender.com`.
-- `holocron` is live on Starter in Oregon at
-  `https://holocron.onrender.com`.
+- `holocron-web` is live on Starter in Oregon at
+  `https://holocron-web.onrender.com`.
 - The Blueprint created no Render database; the API uses the existing Neon US
   West database with pooled runtime and direct migration connections.
 - The final API pre-deploy migration and both final service deploys succeeded.

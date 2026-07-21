@@ -36,7 +36,7 @@ services:
       - key: WEB_CONCURRENCY
         value: "0"
       - key: FRONTEND_ORIGINS
-        value: https://holocron.onrender.com
+        value: https://holocron-web.onrender.com
       - key: AI_REQUEST_EXTRACTION_PROVIDER
         value: vercel
       - key: AI_REQUEST_EXTRACTION_MODEL
@@ -53,7 +53,7 @@ services:
         sync: false
 
   - type: web
-    name: holocron
+    name: holocron-web
     runtime: node
     plan: starter
     numInstances: 1
