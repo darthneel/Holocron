@@ -39,6 +39,7 @@ class HolocronAppTest < Minitest::Test
 
     assert last_response.ok?
     assert_equal "ok", parsed_response.fetch("status")
+    assert_match(/\Aapp;dur=\d+\.\d\z/, last_response.headers.fetch("Server-Timing"))
   end
 
   def test_database_pool_replaces_a_connection_closed_while_idle
@@ -817,16 +818,28 @@ class HolocronAppTest < Minitest::Test
     assert_equal 1, briefing.fetch("current_version_number")
     assert_equal scheduled.fetch("id"), briefing.dig("meeting", "scheduling_request_id")
     assert_equal "City Hall - Conference Room A", briefing.dig("meeting", "location")
+    task = briefing.fetch("tasks").fetch(0)
+    assert_equal "Prepare briefing: #{briefing.dig("meeting", "title")}", task.fetch("title")
+    assert_equal "open", task.fetch("status")
+    assert_equal "system", task.fetch("origin")
+    assert_equal scheduled.dig("assigned_scheduler", "id"), task.dig("assignee", "id")
+    assert_equal briefing.dig("meeting", "starts_at"), task.fetch("due_at")
     assert_equal 6, briefing.dig("versions", 0, "sections").length
     assert_includes briefing.dig("source_catalog").map { |source| source.fetch("source_type") }, "scheduling_request"
     assert_includes briefing.dig("source_catalog").map { |source| source.fetch("source_type") }, "person"
     assert_equal 1, Holocron::Database.db[:meetings].where(scheduling_request_id: scheduled.fetch("id")).count
     assert_equal 1, Holocron::Database.db[:briefings].where(id: briefing.fetch("id")).count
+    assert_equal 1, Holocron::Database.db[:tasks].where(meeting_id: briefing.dig("meeting", "id")).count
+    assert_equal 1, Holocron::Database.db[:task_state_transitions].where(task_id: task.fetch("id"), to_status: "open").count
     refute Holocron::Database.db.table_exists?(:briefing_sources)
     refute Holocron::Database.db.table_exists?(:briefing_reviews)
     stored_sources = JSON.parse(Holocron::Database.db[:briefing_sections].exclude(sources_json: "[]").get(:sources_json))
     assert stored_sources.all? { |source| source.key?("source_label") }
-    assert_equal initial_audit_count + 2, Holocron::Database.db[:audit_events].count
+    assert_equal initial_audit_count + 3, Holocron::Database.db[:audit_events].count
+
+    get "/api/tasks"
+    assert last_response.ok?
+    assert_includes parsed_response.fetch("tasks").map { |entry| entry.fetch("id") }, task.fetch("id")
 
     get "/api/briefings"
     assert last_response.ok?
@@ -837,6 +850,7 @@ class HolocronAppTest < Minitest::Test
     assert_equal briefing.fetch("id"), parsed_response.dig("briefing", "id")
     assert_equal "draft", parsed_response.dig("briefing", "status")
     assert_equal "City Hall - Conference Room A", parsed_response.dig("briefing", "meeting", "location")
+    assert_equal task.fetch("id"), parsed_response.dig("briefing", "tasks", 0, "id")
   end
 
   def test_grounded_generation_appends_a_cited_draft_version
@@ -1578,6 +1592,7 @@ class HolocronAppTest < Minitest::Test
     created = create_scheduling_request
     meeting_count = Holocron::Database.db[:meetings].count
     briefing_count = Holocron::Database.db[:briefings].count
+    task_count = Holocron::Database.db[:tasks].count
     audit_count = Holocron::Database.db[:audit_events].count
 
     post_json "/api/scheduling-requests/#{created.fetch("id")}/meeting", meeting_payload, actor_headers
@@ -1586,6 +1601,7 @@ class HolocronAppTest < Minitest::Test
     assert_match(/Only a scheduled request/, parsed_response.fetch("error"))
     assert_equal meeting_count, Holocron::Database.db[:meetings].count
     assert_equal briefing_count, Holocron::Database.db[:briefings].count
+    assert_equal task_count, Holocron::Database.db[:tasks].count
     assert_equal audit_count, Holocron::Database.db[:audit_events].count
   end
 
@@ -1625,6 +1641,25 @@ class HolocronAppTest < Minitest::Test
     assert_equal 2, parsed_response.fetch("current_lock_version")
     assert_equal version_count + 1, Holocron::Database.db[:briefing_versions].count
     assert_equal audit_count, Holocron::Database.db[:audit_events].count
+  end
+
+  def test_current_briefing_detail_defers_history_and_source_catalog
+    briefing = create_briefing(isolated_request_overrides("lean-detail"))
+    post_json "/api/briefings/#{briefing.fetch("id")}/versions", briefing_version_payload(
+      briefing,
+      objective_body: "Confirm the follow-up owner."
+    ), actor_headers
+    assert last_response.ok?
+
+    get "/api/briefings/#{briefing.fetch("id")}?view=current"
+
+    assert last_response.ok?
+    detail = parsed_response
+    assert_equal "current", detail.fetch("detail_level")
+    assert_equal 1, detail.fetch("versions").length
+    assert_equal 2, detail.fetch("version_summaries").length
+    assert_equal detail.fetch("current_version_number"), detail.dig("versions", 0, "version_number")
+    assert_empty detail.fetch("source_catalog")
   end
 
   def test_briefing_review_is_bound_to_one_version_and_approved_history_survives_revision

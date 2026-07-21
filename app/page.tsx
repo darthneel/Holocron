@@ -14,6 +14,7 @@ import {
   Clock3,
   Inbox,
   Link2,
+  ListTodo,
   MessageSquareText,
   Plus,
   Save,
@@ -26,7 +27,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { HolocronMark } from "./holocron-mark";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9292";
@@ -78,6 +79,7 @@ type WorkspaceView = "meetings" | "relationships" | "foundation" | "members" | "
 type MeetingsView = "requests" | "briefings";
 type LoadingView = WorkspaceView | "meeting-briefings";
 type WorkspaceTheme = "dark" | "light";
+type LoadingItem = { kind: "request" | "briefing"; id: string } | null;
 
 function briefingListItems(body: string) {
   return body
@@ -293,6 +295,25 @@ type RequestBriefingSummary = {
   id: string;
   status: string;
   meeting: MeetingSummary;
+  tasks: Task[];
+};
+
+type Task = {
+  id: string;
+  meeting_id: string | null;
+  scheduling_request_id: string | null;
+  title: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  origin: string;
+  assignee: WorkspaceMember | null;
+  created_by: WorkspaceMember;
+  due_at: string | null;
+  completed_at: string | null;
+  lock_version: number;
+  created_at: string;
+  updated_at: string;
 };
 
 type BriefingSource = {
@@ -348,6 +369,11 @@ type BriefingVersion = {
   created_at: string;
 };
 
+type BriefingVersionSummary = Pick<
+  BriefingVersion,
+  "id" | "version_number" | "status" | "change_summary" | "created_by" | "created_at"
+>;
+
 type BriefingListItem = {
   id: string;
   status: string;
@@ -363,6 +389,7 @@ type BriefingListItem = {
 
 type BriefingDetail = {
   id: string;
+  detail_level: "current" | "full";
   status: string;
   lock_version: number;
   current_version_number: number;
@@ -376,7 +403,9 @@ type BriefingDetail = {
     assigned_scheduler: WorkspaceMember | null;
   };
   created_by: {id: string; display_name: string};
+  tasks: Task[];
   versions: BriefingVersion[];
+  version_summaries: BriefingVersionSummary[];
   source_catalog: BriefingSource[];
   created_at: string;
   updated_at: string;
@@ -720,6 +749,7 @@ export default function Home() {
   const [activeView, setActiveView] = useState<WorkspaceView>("meetings");
   const [meetingsView, setMeetingsView] = useState<MeetingsView>("requests");
   const [loadingView, setLoadingView] = useState<LoadingView | null>(null);
+  const [loadingItem, setLoadingItem] = useState<LoadingItem>(null);
   const [selectedRequest, setSelectedRequest] = useState<SchedulingRequest | null>(null);
   const [selectedBriefing, setSelectedBriefing] = useState<BriefingDetail | null>(null);
   const [form, setForm] = useState<RequestForm | null>(null);
@@ -736,6 +766,17 @@ export default function Home() {
   const [isBriefingSaving, setIsBriefingSaving] = useState(false);
   const [workspaceTheme, setWorkspaceTheme] = useState<WorkspaceTheme>("dark");
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const requestDetailCache = useRef(new Map<string, SchedulingRequest>());
+  const briefingDetailCache = useRef(new Map<string, {detail: BriefingDetail; full: boolean}>());
+  const requestDetailLoads = useRef(new Map<string, Promise<SchedulingRequest>>());
+  const briefingDetailLoads = useRef(new Map<string, Promise<BriefingDetail>>());
+  const requestSelectionController = useRef<AbortController | null>(null);
+  const briefingSelectionController = useRef<AbortController | null>(null);
+  const requestSelectionToken = useRef(0);
+  const briefingSelectionToken = useRef(0);
+  const selectedBriefingId = useRef<string | null>(null);
+  const requestPrefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const briefingPrefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const canMutate = Boolean(session?.known_member);
   const schedulerMembers = foundation?.members.filter(
@@ -751,12 +792,20 @@ export default function Home() {
   async function loadRequests() {
     const response = await fetch(`${API_URL}/api/scheduling-requests`);
     const body = await responseBody(response, "Unable to load scheduling requests.");
+    const currentById = new Map<string, RequestListItem>(body.requests.map((request: RequestListItem) => [request.id, request]));
+    requestDetailCache.current.forEach((detail, id) => {
+      if (currentById.get(id)?.updated_at !== detail.updated_at) requestDetailCache.current.delete(id);
+    });
     setRequests(body.requests);
   }
 
   async function loadBriefings() {
     const response = await fetch(`${API_URL}/api/briefings`);
     const body = await responseBody(response, "Unable to load briefings.");
+    const currentById = new Map<string, BriefingListItem>(body.briefings.map((briefing: BriefingListItem) => [briefing.id, briefing]));
+    briefingDetailCache.current.forEach(({detail}, id) => {
+      if (currentById.get(id)?.updated_at !== detail.updated_at) briefingDetailCache.current.delete(id);
+    });
     setBriefings(body.briefings);
     setBriefingsLoaded(true);
   }
@@ -784,6 +833,81 @@ export default function Home() {
     ]);
     setFoundation(bootstrapBody);
     setRequests(requestsBody.requests);
+  }
+
+  async function fetchRequestDetail(id: string, signal?: AbortSignal) {
+    const cached = requestDetailCache.current.get(id);
+    if (cached) return cached;
+    const existing = requestDetailLoads.current.get(id);
+    if (existing) return existing;
+
+    const load = (async () => {
+      const response = await fetch(`${API_URL}/api/scheduling-requests/${id}`, {signal});
+      const body = await responseBody(response, "Unable to load request.") as SchedulingRequest;
+      requestDetailCache.current.set(id, body);
+      return body;
+    })();
+    requestDetailLoads.current.set(id, load);
+    try {
+      return await load;
+    } finally {
+      if (requestDetailLoads.current.get(id) === load) requestDetailLoads.current.delete(id);
+    }
+  }
+
+  async function fetchBriefingDetail(id: string, options: {full?: boolean; signal?: AbortSignal} = {}) {
+    const full = Boolean(options.full);
+    const cached = briefingDetailCache.current.get(id);
+    if (cached && (cached.full || !full)) return cached.detail;
+    const loadKey = `${id}:${full ? "full" : "current"}`;
+    const existing = briefingDetailLoads.current.get(loadKey);
+    if (existing) return existing;
+
+    const load = (async () => {
+      const query = full ? "" : "?view=current";
+      const response = await fetch(`${API_URL}/api/briefings/${id}${query}`, {signal: options.signal});
+      const body = await responseBody(response, "Unable to load briefing.") as BriefingDetail;
+      const existingEntry = briefingDetailCache.current.get(id);
+      const bodyIsFull = body.detail_level === "full";
+      if (!existingEntry?.full || bodyIsFull) {
+        briefingDetailCache.current.set(id, {detail: body, full: bodyIsFull});
+      }
+      return body;
+    })();
+    briefingDetailLoads.current.set(loadKey, load);
+    try {
+      return await load;
+    } finally {
+      if (briefingDetailLoads.current.get(loadKey) === load) briefingDetailLoads.current.delete(loadKey);
+    }
+  }
+
+  function scheduleRequestPrefetch(id: string) {
+    if (requestDetailCache.current.has(id)) return;
+    if (requestPrefetchTimer.current) clearTimeout(requestPrefetchTimer.current);
+    requestPrefetchTimer.current = setTimeout(() => {
+      requestPrefetchTimer.current = null;
+      void fetchRequestDetail(id).catch(() => undefined);
+    }, 120);
+  }
+
+  function scheduleBriefingPrefetch(id: string) {
+    if (briefingDetailCache.current.has(id)) return;
+    if (briefingPrefetchTimer.current) clearTimeout(briefingPrefetchTimer.current);
+    briefingPrefetchTimer.current = setTimeout(() => {
+      briefingPrefetchTimer.current = null;
+      void fetchBriefingDetail(id).catch(() => undefined);
+    }, 120);
+  }
+
+  function cancelRequestPrefetch() {
+    if (requestPrefetchTimer.current) clearTimeout(requestPrefetchTimer.current);
+    requestPrefetchTimer.current = null;
+  }
+
+  function cancelBriefingPrefetch() {
+    if (briefingPrefetchTimer.current) clearTimeout(briefingPrefetchTimer.current);
+    briefingPrefetchTimer.current = null;
   }
 
   async function openWorkspaceView(view: WorkspaceView) {
@@ -861,30 +985,85 @@ export default function Home() {
   }
 
   async function selectRequest(id: string) {
+    const token = ++requestSelectionToken.current;
+    requestSelectionController.current?.abort();
+    cancelRequestPrefetch();
     setError("");
     setFormErrors({});
     setRequestExtraction(null);
     setExtractionText("");
     setMode("inbox");
+    const cached = requestDetailCache.current.get(id);
+    if (cached) {
+      setSelectedRequest(cached);
+      setLoadingItem(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    requestSelectionController.current = controller;
+    setLoadingItem({kind: "request", id});
     try {
-      const response = await fetch(`${API_URL}/api/scheduling-requests/${id}`);
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Unable to load request.");
-      setSelectedRequest(body);
+      const body = await fetchRequestDetail(id, controller.signal);
+      if (requestSelectionToken.current === token) setSelectedRequest(body);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to load request.");
+      if (!(requestError instanceof DOMException && requestError.name === "AbortError") && requestSelectionToken.current === token) {
+        setError(requestError instanceof Error ? requestError.message : "Unable to load request.");
+      }
+    } finally {
+      if (requestSelectionToken.current === token) {
+        requestSelectionController.current = null;
+        setLoadingItem((current) => current?.kind === "request" && current.id === id ? null : current);
+      }
     }
   }
 
   async function selectBriefing(id: string) {
+    const token = ++briefingSelectionToken.current;
+    selectedBriefingId.current = id;
+    briefingSelectionController.current?.abort();
+    cancelBriefingPrefetch();
+    setError("");
+    const cached = briefingDetailCache.current.get(id);
+    if (cached) {
+      setSelectedBriefing(cached.detail);
+      setLoadingItem(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    briefingSelectionController.current = controller;
+    setLoadingItem({kind: "briefing", id});
+    try {
+      const body = await fetchBriefingDetail(id, {signal: controller.signal});
+      if (briefingSelectionToken.current === token) setSelectedBriefing(body);
+    } catch (requestError) {
+      if (!(requestError instanceof DOMException && requestError.name === "AbortError") && briefingSelectionToken.current === token) {
+        setError(requestError instanceof Error ? requestError.message : "Unable to load briefing.");
+      }
+    } finally {
+      if (briefingSelectionToken.current === token) {
+        briefingSelectionController.current = null;
+        setLoadingItem((current) => current?.kind === "briefing" && current.id === id ? null : current);
+      }
+    }
+  }
+
+  async function loadFullBriefing(id: string) {
+    const cached = briefingDetailCache.current.get(id);
+    if (cached?.full) return cached.detail;
+
+    setLoadingItem({kind: "briefing", id});
     setError("");
     try {
-      const response = await fetch(`${API_URL}/api/briefings/${id}`);
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Unable to load briefing.");
-      setSelectedBriefing(body);
+      const detail = await fetchBriefingDetail(id, {full: true});
+      if (selectedBriefingId.current === id) setSelectedBriefing(detail);
+      return detail;
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to load briefing.");
+      setError(requestError instanceof Error ? requestError.message : "Unable to load briefing history.");
+      return null;
+    } finally {
+      setLoadingItem((current) => current?.kind === "briefing" && current.id === id ? null : current);
     }
   }
 
@@ -1020,6 +1199,7 @@ export default function Home() {
         throw new Error(body.error ?? "Unable to save scheduling request.");
       }
 
+      requestDetailCache.current.set(body.id, body);
       setSelectedRequest(body);
       setMode("inbox");
       setForm(null);
@@ -1062,12 +1242,14 @@ export default function Home() {
 
       if (!response.ok) {
         if (response.status === 409) {
+          requestDetailCache.current.delete(selectedRequest.id);
           await selectRequest(selectedRequest.id);
           await loadRequests();
         }
         throw new Error(body.error ?? "Unable to update request status.");
       }
 
+      requestDetailCache.current.set(body.id, body);
       setSelectedRequest(body);
       await loadRequests();
       setAuditEvents(null);
@@ -1102,7 +1284,10 @@ export default function Home() {
 
       await loadRelationships();
       setAuditEvents(null);
-      if (selectedRequest) await selectRequest(selectedRequest.id);
+      if (selectedRequest) {
+        requestDetailCache.current.delete(selectedRequest.id);
+        await selectRequest(selectedRequest.id);
+      }
       return true;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to save relationship record.");
@@ -1125,11 +1310,15 @@ export default function Home() {
     });
     const body = await response.json();
     if (!response.ok) {
-      if (response.status === 409 && selectedBriefing) await selectBriefing(selectedBriefing.id);
+      if (response.status === 409 && selectedBriefing) {
+        briefingDetailCache.current.delete(selectedBriefing.id);
+        await selectBriefing(selectedBriefing.id);
+      }
       const detail = body.fields ? Object.values(body.fields).join(" ") : body.error;
       throw new Error(detail ?? "Unable to update briefing.");
     }
 
+    briefingDetailCache.current.set(body.id, {detail: body, full: true});
     setSelectedBriefing(body);
     await loadBriefings();
     setAuditEvents(null);
@@ -1173,6 +1362,7 @@ export default function Home() {
       }
 
       await loadRequests();
+      requestDetailCache.current.delete(selectedRequest.id);
       await selectRequest(selectedRequest.id);
       await openMeetingsView("briefings");
 
@@ -1228,6 +1418,15 @@ export default function Home() {
     setLoadingView(null);
     setSelectedRequest(null);
     setSelectedBriefing(null);
+    selectedBriefingId.current = null;
+    requestDetailCache.current.clear();
+    briefingDetailCache.current.clear();
+    requestDetailLoads.current.clear();
+    briefingDetailLoads.current.clear();
+    requestSelectionController.current?.abort();
+    briefingSelectionController.current?.abort();
+    cancelRequestPrefetch();
+    cancelBriefingPrefetch();
     setForm(null);
     setRequestExtraction(null);
     setExtractionText("");
@@ -1356,7 +1555,7 @@ export default function Home() {
               <div className="request-inbox" aria-label="Scheduling request inbox">
                 <div className="request-inbox-head"><span>{requests.length} {requests.length === 1 ? "request" : "requests"}</span></div>
                 {requests.length === 0 ? <div className="empty-inbox"><Inbox aria-hidden="true" /><strong>No scheduling requests yet</strong><span>New requests will appear here.</span></div> : requests.map((request) => (
-                  <button className={`request-row ${selectedRequest?.id === request.id && mode === "inbox" ? "is-selected" : ""}`} type="button" key={request.id} onClick={() => selectRequest(request.id)}>
+                  <button className={`request-row ${selectedRequest?.id === request.id && mode === "inbox" ? "is-selected" : ""} ${loadingItem?.kind === "request" && loadingItem.id === request.id ? "is-loading" : ""}`} type="button" key={request.id} onClick={() => void selectRequest(request.id)} onPointerEnter={() => scheduleRequestPrefetch(request.id)} onPointerLeave={cancelRequestPrefetch} onFocus={() => scheduleRequestPrefetch(request.id)} onBlur={cancelRequestPrefetch} aria-busy={loadingItem?.kind === "request" && loadingItem.id === request.id}>
                     <span className="request-source">{sourceLabels[request.source_channel]}</span>
                     <span className={`request-status request-status-${request.status}`}>{formatStatus(request.status)}</span>
                     <strong>{request.requester_name}</strong>
@@ -1368,6 +1567,7 @@ export default function Home() {
               </div>
 
               <div className="request-panel">
+                {loadingItem?.kind === "request" ? <div className="detail-loading-state" role="status"><span aria-hidden="true" />Loading request</div> : null}
                 {mode === "extract" ? (
                   <RequestExtractionComposer
                     inputText={extractionText}
@@ -1427,6 +1627,10 @@ export default function Home() {
             key={selectedBriefing?.id ?? "briefings"}
             briefings={briefings}
             selectedBriefing={selectedBriefing}
+            loadingBriefingId={loadingItem?.kind === "briefing" ? loadingItem.id : null}
+            onPrefetch={scheduleBriefingPrefetch}
+            onCancelPrefetch={cancelBriefingPrefetch}
+            onLoadFull={loadFullBriefing}
             canMutate={canMutate}
             isSaving={isBriefingSaving}
             onSelect={selectBriefing}
@@ -1477,12 +1681,16 @@ export default function Home() {
   );
 }
 
-function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, onSelect, onGenerate, onSaveVersion, onSubmitReview, onReview }: {
+function BriefingsSection({ briefings, selectedBriefing, loadingBriefingId, canMutate, isSaving, onSelect, onPrefetch, onCancelPrefetch, onLoadFull, onGenerate, onSaveVersion, onSubmitReview, onReview }: {
   briefings: BriefingListItem[];
   selectedBriefing: BriefingDetail | null;
+  loadingBriefingId: string | null;
   canMutate: boolean;
   isSaving: boolean;
   onSelect: (id: string) => Promise<void>;
+  onPrefetch: (id: string) => void;
+  onCancelPrefetch: () => void;
+  onLoadFull: (id: string) => Promise<BriefingDetail | null>;
   onGenerate: (strategy: RetrievalStrategy) => Promise<boolean>;
   onSaveVersion: (payload: Record<string, unknown>) => Promise<boolean>;
   onSubmitReview: () => Promise<boolean>;
@@ -1502,6 +1710,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
   const viewedVersion = selectedBriefing?.versions.find(
     (version) => version.version_number === viewedVersionNumber,
   ) ?? currentVersion;
+  const versionOptions = selectedBriefing?.version_summaries ?? [];
   const viewingCurrentVersion = Boolean(
     viewedVersion && selectedBriefing && viewedVersion.version_number === selectedBriefing.current_version_number,
   );
@@ -1515,13 +1724,30 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
     await onSelect(id);
   }
 
-  function beginRevision() {
-    if (!currentVersion) return;
-    setSections(briefingSectionsFromVersion(currentVersion));
+  async function beginRevision() {
+    if (!selectedBriefing || !currentVersion) return;
+    const detail = selectedBriefing.detail_level === "full"
+      ? selectedBriefing
+      : await onLoadFull(selectedBriefing.id);
+    const editableVersion = detail?.versions.find(
+      (version) => version.version_number === detail.current_version_number,
+    );
+    if (!editableVersion) return;
+    setSections(briefingSectionsFromVersion(editableVersion));
     setChangeSummary("");
     setPendingSources({});
     setViewedVersionNumber(null);
     setMode("edit");
+  }
+
+  async function selectVersion(versionNumber: number) {
+    setMode("view");
+    setExpandedSources({});
+    if (selectedBriefing && !selectedBriefing.versions.some((version) => version.version_number === versionNumber)) {
+      const detail = await onLoadFull(selectedBriefing.id);
+      if (!detail?.versions.some((version) => version.version_number === versionNumber)) return;
+    }
+    setViewedVersionNumber(versionNumber);
   }
 
   function updateSection(index: number, field: keyof Omit<BriefingSectionForm, "sources">, value: string) {
@@ -1609,10 +1835,11 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
 
       <div className="briefing-workbench">
         <div className="briefing-inbox" aria-label="Meeting briefings">
+          <div className="briefing-inbox-head"><span>{briefings.length} {briefings.length === 1 ? "briefing" : "briefings"}</span></div>
           {briefings.length === 0 ? (
             <div className="briefing-empty"><BookOpen aria-hidden="true" /><strong>No briefings yet</strong><span>Scheduled meetings will appear here.</span></div>
           ) : briefings.map((briefing) => (
-            <button className={`briefing-row ${selectedBriefing?.id === briefing.id ? "is-selected" : ""}`} type="button" key={briefing.id} onClick={() => select(briefing.id)}>
+            <button className={`briefing-row ${selectedBriefing?.id === briefing.id ? "is-selected" : ""} ${loadingBriefingId === briefing.id ? "is-loading" : ""}`} type="button" key={briefing.id} onClick={() => void select(briefing.id)} onPointerEnter={() => onPrefetch(briefing.id)} onPointerLeave={onCancelPrefetch} onFocus={() => onPrefetch(briefing.id)} onBlur={onCancelPrefetch} aria-busy={loadingBriefingId === briefing.id}>
               <span className="briefing-source">{briefing.requester_name}</span>
               <span className={`briefing-status briefing-status-${briefing.status}`}>{briefingStatusLabels[briefing.status]}</span>
               <strong>{briefing.meeting.title}</strong>
@@ -1624,6 +1851,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
         </div>
 
         <div className="briefing-panel">
+          {loadingBriefingId ? <div className="detail-loading-state" role="status"><span aria-hidden="true" />Loading briefing</div> : null}
           {!selectedBriefing || !viewedVersion ? (
             <div className="briefing-empty-panel"><BookOpen aria-hidden="true" /><h3>Select a briefing</h3><p>Meeting preparation and approved versions appear here.</p></div>
           ) : (
@@ -1637,8 +1865,8 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
               </header>
 
               <div className="briefing-version-bar">
-                <label><span>Version</span><select value={viewedVersion.version_number} onChange={(event) => { setViewedVersionNumber(Number(event.target.value)); setMode("view"); setExpandedSources({}); }}>
-                  {selectedBriefing.versions.map((version) => <option key={version.id} value={version.version_number}>Version {version.version_number} · {briefingStatusLabels[version.status]}</option>)}
+                <label><span>Version</span><select value={viewedVersionNumber ?? viewedVersion.version_number} onChange={(event) => void selectVersion(Number(event.target.value))}>
+                  {versionOptions.map((version) => <option key={version.id} value={version.version_number}>Version {version.version_number} · {briefingStatusLabels[version.status]}</option>)}
                 </select></label>
                 <div><strong>{viewedVersion.change_summary || `Version ${viewedVersion.version_number}`}</strong><span>{viewedVersion.created_by.display_name} · {formatDateTime(viewedVersion.created_at)}</span></div>
               </div>
@@ -1649,6 +1877,8 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                 <div><span>Time</span><strong>{formatMeetingTime(selectedBriefing.meeting.starts_at, selectedBriefing.meeting.ends_at)}</strong></div>
                 <div><span>Location</span><strong>{selectedBriefing.meeting.location || "Not specified"}</strong></div>
               </div>
+
+              {selectedBriefing.tasks.map((task) => <div className="briefing-preparation-task" key={task.id}><ListTodo aria-hidden="true" /><span><small>Preparation task · {formatRelationshipType(task.status)}</small><strong>{task.title}</strong><small>{task.assignee?.display_name || "Unassigned"}{task.due_at ? ` · Due ${formatDateTime(task.due_at)}` : ""}</small></span></div>)}
 
               {mode === "edit" ? (
                 <form className="briefing-editor" onSubmit={saveVersion}>
@@ -1706,7 +1936,7 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
                             <Link2 aria-hidden="true" />
                             <span>{sectionSources.length} {sectionSources.length === 1 ? "source" : "sources"}</span>
                           </button>
-                          {expandedSources[section.id] ? <div id={`briefing-sources-${section.id}`} className="briefing-sources">{sectionSources.map((source) => <div key={`${source.source_type}-${source.source_id}`}><Link2 aria-hidden="true" /><span><strong>{source.source_label}</strong><small>{formatRelationshipType(source.source_type)}{source.source_excerpt ? ` · ${source.source_excerpt}` : ""}</small></span></div>)}</div> : null}
+                          <div id={`briefing-sources-${section.id}`} className={`briefing-sources ${expandedSources[section.id] ? "is-open" : ""}`} aria-hidden={!expandedSources[section.id]}><div className="briefing-sources-list">{sectionSources.map((source) => <div key={`${source.source_type}-${source.source_id}`}><Link2 aria-hidden="true" /><span><strong>{source.source_label}</strong><small>{formatRelationshipType(source.source_type)}{source.source_excerpt ? ` · ${source.source_excerpt}` : ""}</small></span></div>)}</div></div>
                         </div> : null}
                       </section>;
                     })}
@@ -1714,8 +1944,8 @@ function BriefingsSection({ briefings, selectedBriefing, canMutate, isSaving, on
 
                   {canMutate && viewingCurrentVersion ? (
                     <div className="briefing-actions">
-                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}>{isSaving ? "Generating" : hasGeneratedCurrentVersion ? "Generate linked" : "Generate linked draft"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}>{isSaving ? "Generating" : "Generate semantic"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}>{isSaving ? "Generating" : "Generate hybrid"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("fused")} disabled={isSaving}>{isSaving ? "Generating" : "Generate fused"}</button><button className="icon-text-button" type="button" onClick={beginRevision} disabled={isSaving}>Edit as new version</button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}>{isSaving ? "Submitting" : "Submit for review"}</button></> : null}
-                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}>{isSaving ? "Generating" : "Generate linked"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}>{isSaving ? "Generating" : "Generate semantic"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}>{isSaving ? "Generating" : "Generate hybrid"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("fused")} disabled={isSaving}>{isSaving ? "Generating" : "Generate fused"}</button><button className="primary-command" type="button" onClick={beginRevision} disabled={isSaving}>Create revision</button></> : null}
+                      {selectedBriefing.status === "draft" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}>{isSaving ? "Generating" : hasGeneratedCurrentVersion ? "Generate linked" : "Generate linked draft"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}>{isSaving ? "Generating" : "Generate semantic"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}>{isSaving ? "Generating" : "Generate hybrid"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("fused")} disabled={isSaving}>{isSaving ? "Generating" : "Generate fused"}</button><button className="icon-text-button" type="button" onClick={() => void beginRevision()} disabled={isSaving}>Edit as new version</button><button className="primary-command" type="button" onClick={submitForReview} disabled={isSaving}>{isSaving ? "Submitting" : "Submit for review"}</button></> : null}
+                      {selectedBriefing.status === "approved" || selectedBriefing.status === "changes_requested" ? <><button className="icon-text-button" type="button" onClick={() => generateDraft("linked_recency")} disabled={isSaving}>{isSaving ? "Generating" : "Generate linked"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("semantic")} disabled={isSaving}>{isSaving ? "Generating" : "Generate semantic"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("hybrid")} disabled={isSaving}>{isSaving ? "Generating" : "Generate hybrid"}</button><button className="icon-text-button" type="button" onClick={() => generateDraft("fused")} disabled={isSaving}>{isSaving ? "Generating" : "Generate fused"}</button><button className="primary-command" type="button" onClick={() => void beginRevision()} disabled={isSaving}>Create revision</button></> : null}
                       {selectedBriefing.status === "in_review" ? <div className="briefing-review-form"><Field label="Review notes"><textarea rows={2} value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} /></Field><div><button className="icon-text-button" type="button" onClick={() => decide("changes_requested")} disabled={isSaving || !reviewNotes.trim()}>Request changes</button><button className="primary-command" type="button" onClick={() => decide("approved")} disabled={isSaving}>{isSaving ? "Saving" : "Approve version"}</button></div></div> : null}
                     </div>
                   ) : null}
@@ -2093,10 +2323,13 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
         <section className="meeting-briefing-block">
           <div className="meeting-briefing-heading"><div><p className="eyebrow">Meeting preparation</p><h3>Meeting and briefing</h3></div>{briefing ? <span className={`briefing-status briefing-status-${briefing.status}`}>{briefingStatusLabels[briefing.status]}</span> : null}</div>
           {briefing ? (
-            <div className="meeting-briefing-summary">
-              <div><CalendarCheck aria-hidden="true" /><span><strong>{briefing.meeting.title}</strong><small>{formatDateTime(briefing.meeting.starts_at)} · {briefing.meeting.location || "Location not specified"}</small></span></div>
-              <button className="primary-command" type="button" onClick={() => onOpenBriefing(briefing.id)}><BookOpen aria-hidden="true" /><span>Open briefing</span></button>
-            </div>
+            <>
+              <div className="meeting-briefing-summary">
+                <div><CalendarCheck aria-hidden="true" /><span><strong>{briefing.meeting.title}</strong><small>{formatDateTime(briefing.meeting.starts_at)} · {briefing.meeting.location || "Location not specified"}</small></span></div>
+                <button className="primary-command" type="button" onClick={() => onOpenBriefing(briefing.id)}><BookOpen aria-hidden="true" /><span>Open briefing</span></button>
+              </div>
+              {briefing.tasks.map((task) => <div className="meeting-preparation-task" key={task.id}><ListTodo aria-hidden="true" /><span><small>Preparation task · {formatRelationshipType(task.status)}</small><strong>{task.title}</strong><small>{task.assignee?.display_name || "Unassigned"}{task.due_at ? ` · Due ${formatDateTime(task.due_at)}` : ""}</small></span></div>)}
+            </>
           ) : canMutate ? (
             <form className="meeting-create-form" onSubmit={createMeeting}>
               <div className="field-grid two">

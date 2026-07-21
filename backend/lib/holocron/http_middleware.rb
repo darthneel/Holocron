@@ -5,6 +5,23 @@ require "securerandom"
 require "time"
 
 module Holocron
+  class ServerTimingMiddleware
+    HEADER = "Server-Timing"
+
+    def initialize(app)
+      @app = app
+    end
+
+    def call(env)
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      status, headers, body = @app.call(env)
+      duration_ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1_000
+      updated_headers = headers.dup
+      updated_headers[HEADER] = format("app;dur=%.1f", duration_ms)
+      [status, updated_headers, body]
+    end
+  end
+
   class RequestIdMiddleware
     HEADER = "X-Request-ID"
     ENV_KEY = "holocron.request_id"
@@ -28,7 +45,7 @@ module Holocron
     LOCAL_ORIGIN = %r{\Ahttp://(?:localhost|127\.0\.0\.1)(?::\d+)?\z}
     ALLOW_HEADERS = "Content-Type, X-Holocron-Actor-Email, X-Request-ID"
     ALLOW_METHODS = "GET, POST, PATCH, OPTIONS"
-    EXPOSE_HEADERS = "X-Request-ID"
+    EXPOSE_HEADERS = "X-Request-ID, Server-Timing"
 
     def initialize(app)
       @app = app

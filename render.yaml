@@ -1,0 +1,83 @@
+services:
+  - type: web
+    name: holocron-api
+    runtime: ruby
+    plan: starter
+    numInstances: 1
+    region: oregon
+    branch: production
+    rootDir: backend
+    buildCommand: bundle install
+    preDeployCommand: DATABASE_URL="$MIGRATION_DATABASE_URL" bundle exec rake db:migrate
+    startCommand: bundle exec puma --config config/puma.rb config.ru
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - backend/**
+        - render.yaml
+    envVars:
+      - key: RACK_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+      - key: DATABASE_POOL_SIZE
+        value: "5"
+      - key: DATABASE_POOL_TIMEOUT
+        value: "5"
+      - key: DATABASE_CONNECTION_VALIDATION_TIMEOUT
+        value: "30"
+      - key: PUMA_MIN_THREADS
+        value: "1"
+      - key: PUMA_MAX_THREADS
+        value: "5"
+      - key: WEB_CONCURRENCY
+        value: "0"
+      - key: FRONTEND_ORIGINS
+        value: https://holocron-web.onrender.com
+      - key: AI_REQUEST_EXTRACTION_PROVIDER
+        value: vercel
+      - key: AI_REQUEST_EXTRACTION_MODEL
+        value: openai/gpt-5.6-luna
+      - key: AI_BRIEFING_GENERATION_PROVIDER
+        value: vercel
+      - key: AI_BRIEFING_GENERATION_MODEL
+        value: openai/gpt-5.6-terra
+      - key: AI_EMBEDDING_PROVIDER
+        value: vercel
+      - key: AI_EMBEDDING_MODEL
+        value: openai/text-embedding-3-small
+      - key: AI_GATEWAY_API_KEY
+        sync: false
+
+  - type: web
+    name: holocron-web
+    runtime: node
+    plan: starter
+    numInstances: 1
+    region: oregon
+    branch: production
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - app/**
+        - public/**
+        - worker/**
+        - build/**
+        - package.json
+        - package-lock.json
+        - next.config.ts
+        - vite.config.ts
+        - tsconfig.json
+        - postcss.config.mjs
+        - eslint.config.mjs
+        - .node-version
+        - render.yaml
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://holocron-api.onrender.com

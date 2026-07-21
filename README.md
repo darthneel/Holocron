@@ -212,11 +212,63 @@ different model.
 
 ## Deployment
 
-This milestone remains local-only. The frontend depends on the separate Ruby API
-and PostgreSQL database, which are not part of the current Sites deployment
-target. Publishing only the frontend would produce a workspace that cannot load
-or persist records. Deployment still requires a backend-hosting decision and a
-managed PostgreSQL connection URL.
+Production is configured to run on Render in Oregon as two independently
+deployed Starter web services. `holocron-web` serves the vinext frontend and
+calls `holocron-api` over HTTPS. Only the API connects to the existing Neon US
+West PostgreSQL database; the Blueprint does not create a Render Postgres
+resource.
+
+```text
+Browser -> holocron-web -> holocron-api -> existing Neon database
+```
+
+Both services deploy from the `production` branch using the root-level
+`render.yaml`. The frontend uses Node `22.22.0`; the API uses the Ruby version
+recorded in `backend/Gemfile.lock`.
+
+### Render environment variables
+
+The Blueprint supplies the non-secret production settings. Enter these secrets
+in the Render dashboard when creating the Blueprint:
+
+| Service | Variable | Value |
+| --- | --- | --- |
+| `holocron-api` | `DATABASE_URL` | Neon pooled URL (hostname contains `-pooler`; TLS required) |
+| `holocron-api` | `MIGRATION_DATABASE_URL` | Neon direct URL (TLS required) |
+| `holocron-api` | `AI_GATEWAY_API_KEY` | Production Vercel AI Gateway credential |
+
+The API runtime uses `DATABASE_URL`; the pre-deploy migration temporarily uses
+`MIGRATION_DATABASE_URL`. The frontend receives the public
+`NEXT_PUBLIC_API_URL=https://holocron-api.onrender.com` value at build time, and
+the API allows `https://holocron-web.onrender.com` through `FRONTEND_ORIGINS`.
+If either Render service name is unavailable, choose both final names and update
+these two URL values before deploying.
+
+Do not configure `TEST_DATABASE_URL` in production. Never run `db:create`,
+`db:setup`, or `db:seed` against the production Neon database.
+
+### Migrations and health checks
+
+Every API deploy runs the following pre-deploy command before new application
+instances start:
+
+```bash
+DATABASE_URL="$MIGRATION_DATABASE_URL" bundle exec rake db:migrate
+```
+
+Render checks the API at `GET /health` and the frontend at `GET /`. The API
+health response should be HTTP 200 with `{"status":"ok","service":"holocron-api"}`.
+
+### Rollback
+
+For an application regression, roll back only the affected Render service to
+its previous successful deploy. Do not automatically reverse a database
+migration: first confirm that the old application remains compatible with the
+current schema. Use Neon restore capabilities only for actual data corruption,
+not for an ordinary application rollback.
+
+See [the Render deployment plan](docs/render-deployment-plan.md) for the complete
+provisioning sequence, smoke test, and operational checklist.
 
 ## Fake Entry Flow
 

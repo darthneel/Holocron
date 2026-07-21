@@ -10,10 +10,12 @@ require_relative "lib/holocron/relationships"
 require_relative "lib/holocron/request_extractions"
 require_relative "lib/holocron/scheduling_requests"
 require_relative "lib/holocron/scheduling_request_workflow"
+require_relative "lib/holocron/tasks"
 
 module Holocron
   class App < Roda
     use RequestIdMiddleware
+    use ServerTimingMiddleware
     use CorsMiddleware
     use JsonErrorMiddleware
 
@@ -78,6 +80,16 @@ module Holocron
           {audit_events: events}
         end
 
+        r.get "tasks" do
+          workspace = current_workspace
+          unless workspace
+            response.status = 503
+            next({error: "Foundation data has not been seeded."})
+          end
+
+          {tasks: Tasks.list(workspace: workspace)}
+        end
+
         r.on "briefings" do
           workspace = current_workspace
 
@@ -112,7 +124,13 @@ module Holocron
             end
 
             r.get true do
-              briefing = Briefings.fetch(id: id, workspace: workspace)
+              lean_detail = r.params["view"] == "current"
+              briefing = Briefings.fetch(
+                id: id,
+                workspace: workspace,
+                include_history: !lean_detail,
+                include_source_catalog: !lean_detail
+              )
               unless briefing
                 response.status = 404
                 next({error: "Briefing not found."})

@@ -322,3 +322,17 @@ Within a briefing, source snapshots remain inspectable behind per-section source
 disclosures so the reading view foregrounds the brief itself. Empty deterministic
 relationship-context sections are hidden, while historical immutable versions
 remain unchanged.
+
+## Step 9 Task Foundation
+
+The first Step 9 slice introduces tasks without depending on the deferred durable
+agent runner. When staff create a meeting from a scheduled request, the existing
+meeting transaction also inserts one open briefing-preparation task, its initial
+state transition, and a synchronous audit event. Any failure rolls back the task,
+meeting, briefing, and audit records together.
+
+The task is assigned to the request's scheduler and is due when the meeting
+starts. Its stable `origin_key` identifies the automation that produced it and
+provides an idempotency boundary for future retries. Tasks remain ordinary domain
+records; later `create_task` tool calls will propose arguments and will create a
+task only after human approval and independent application validation.

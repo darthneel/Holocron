@@ -7,6 +7,7 @@ require_relative "briefing_context_assembler"
 require_relative "briefing_generation"
 require_relative "database"
 require_relative "relationships"
+require_relative "tasks"
 
 module Holocron
   module Briefings
@@ -106,9 +107,13 @@ module Holocron
       end
     end
 
-    def fetch(id:, workspace:)
+    def fetch(id:, workspace:, include_history: true, include_source_catalog: true)
       briefing = Database.db[:briefings].where(id: id, workspace_id: workspace[:id]).first
-      briefing && serialize_detail(briefing)
+      briefing && serialize_detail(
+        briefing,
+        include_history: include_history,
+        include_source_catalog: include_source_catalog
+      )
     end
 
     def create_for_request(request_id:, attributes:, workspace:, actor:)
@@ -133,7 +138,7 @@ module Holocron
         meeting_id = SecureRandom.uuid
         context = Relationships.context_for_request(request_id: request_id, workspace: workspace)
 
-        db[:meetings].insert(
+        meeting = {
           id: meeting_id,
           workspace_id: workspace[:id],
           scheduling_request_id: request_id,
@@ -141,7 +146,8 @@ module Holocron
           **meeting_attributes,
           created_at: now,
           updated_at: now
-        )
+        }
+        db[:meetings].insert(meeting)
         db[:briefings].insert(
           id: briefing_id,
           workspace_id: workspace[:id],
@@ -170,13 +176,22 @@ module Holocron
           occurred_at: now
         )
 
+        task = Tasks.create_briefing_preparation!(
+          meeting: meeting,
+          request: request,
+          workspace: workspace,
+          actor: actor,
+          correlation_id: correlation_id,
+          occurred_at: now
+        )
+
         write_audit(
           workspace: workspace,
           actor: actor,
           event_type: "meeting.created",
           subject_type: "meeting",
           subject_id: meeting_id,
-          payload: {scheduling_request_id: request_id, briefing_id: briefing_id},
+          payload: {scheduling_request_id: request_id, briefing_id: briefing_id, task_id: task[:id]},
           correlation_id: correlation_id,
           occurred_at: now
         )
@@ -541,17 +556,48 @@ module Holocron
 
     def source_catalog(meeting:, workspace:)
       request_id = meeting[:scheduling_request_id]
+      request = Database.db[:scheduling_requests].where(id: request_id, workspace_id: workspace[:id]).first
       context = Relationships.context_for_request(request_id: request_id, workspace: workspace)
       references = [
-        {source_type: "scheduling_request", source_id: request_id},
-        {source_type: "meeting", source_id: meeting[:id]}
+        request && {
+          source_type: "scheduling_request",
+          source_id: request_id,
+          source_label: "Scheduling request: #{request[:requester_name]}",
+          source_excerpt: request[:purpose]
+        },
+        {
+          source_type: "meeting",
+          source_id: meeting[:id],
+          source_label: "Meeting: #{meeting[:title]}",
+          source_excerpt: [meeting[:starts_at]&.iso8601, meeting[:ends_at]&.iso8601, meeting[:location]].compact.join(" | ")
+        }
       ]
-      references.concat(context[:people].map { |person| {source_type: "person", source_id: person[:id]} })
-      references.concat(context[:organizations].map { |organization| {source_type: "organization", source_id: organization[:id]} })
-      references.concat(context[:interactions].map { |interaction| {source_type: "interaction", source_id: interaction[:id]} })
-      references.filter_map do |reference|
-        source_snapshot(**reference, workspace: workspace)
-      end.uniq { |source| [source[:source_type], source[:source_id]] }
+      references.concat(context[:people].map do |person|
+        person_context = [person[:job_title], person.dig(:organization, :name)].compact.join(", ")
+        {
+          source_type: "person",
+          source_id: person[:id],
+          source_label: person[:display_name],
+          source_excerpt: person_context.empty? ? person[:primary_email] : person_context
+        }
+      end)
+      references.concat(context[:organizations].map do |organization|
+        {
+          source_type: "organization",
+          source_id: organization[:id],
+          source_label: organization[:name],
+          source_excerpt: organization[:notes] || organization[:website_url]
+        }
+      end)
+      references.concat(context[:interactions].map do |interaction|
+        {
+          source_type: "interaction",
+          source_id: interaction[:id],
+          source_label: "#{humanize(interaction[:interaction_type])} with #{interaction.dig(:person, :display_name) || "unknown person"}",
+          source_excerpt: interaction[:summary]
+        }
+      end)
+      references.compact.uniq { |source| [source[:source_type], source[:source_id]] }
     end
 
     def source_snapshot(source_type:, source_id:, workspace:)
@@ -828,20 +874,44 @@ module Holocron
       }
     end
 
-    def serialize_detail(briefing)
+    def serialize_detail(briefing, include_history: true, include_source_catalog: true)
       db = Database.db
       meeting = db[:meetings].where(id: briefing[:meeting_id]).first
       request = db[:scheduling_requests].where(id: meeting[:scheduling_request_id]).first
-      scheduler = db[:workspace_members].where(id: request[:assigned_scheduler_member_id]).first
-      versions = db[:briefing_versions]
+      version_rows = db[:briefing_versions]
         .where(briefing_id: briefing[:id])
         .reverse_order(:version_number)
         .all
-        .map { |version| serialize_version(version) }
-      creator = db[:workspace_members].where(id: briefing[:created_by_workspace_member_id]).first
+      loaded_version_rows = include_history ? version_rows : version_rows.select do |version|
+        version[:version_number] == briefing[:current_version_number]
+      end
+      member_ids = (
+        [request[:assigned_scheduler_member_id], briefing[:created_by_workspace_member_id]] +
+        version_rows.flat_map { |version| [version[:created_by_workspace_member_id], version[:reviewed_by_workspace_member_id]] }
+      ).compact.uniq
+      members_by_id = db[:workspace_members]
+        .where(id: member_ids)
+        .all
+        .to_h { |member| [member[:id], member] }
+      section_rows_by_version = db[:briefing_sections]
+        .where(briefing_version_id: loaded_version_rows.map { |version| version[:id] })
+        .order(:briefing_version_id, :position)
+        .all
+        .group_by { |section| section[:briefing_version_id] }
+      versions = loaded_version_rows.map do |version|
+        serialize_version(
+          version,
+          members_by_id: members_by_id,
+          sections: section_rows_by_version.fetch(version[:id], [])
+        )
+      end
+      version_summaries = version_rows.map do |version|
+        serialize_version_summary(version, members_by_id: members_by_id)
+      end
 
       {
         id: briefing[:id],
+        detail_level: include_history && include_source_catalog ? "full" : "current",
         status: briefing[:status],
         lock_version: briefing[:lock_version],
         current_version_number: briefing[:current_version_number],
@@ -852,11 +922,13 @@ module Holocron
           requester_organization: request[:requester_organization],
           purpose: request[:purpose],
           status: request[:status],
-          assigned_scheduler: scheduler && serialize_member(scheduler)
+          assigned_scheduler: serialize_member(members_by_id[request[:assigned_scheduler_member_id]])
         },
-        created_by: serialize_member(creator),
+        created_by: serialize_member(members_by_id[briefing[:created_by_workspace_member_id]]),
+        tasks: Tasks.for_meeting(meeting_id: meeting[:id], workspace: {id: briefing[:workspace_id]}),
         versions: versions,
-        source_catalog: source_catalog(meeting: meeting, workspace: {id: briefing[:workspace_id]}),
+        version_summaries: version_summaries,
+        source_catalog: include_source_catalog ? source_catalog(meeting: meeting, workspace: {id: briefing[:workspace_id]}) : [],
         created_at: iso8601(briefing[:created_at]),
         updated_at: iso8601(briefing[:updated_at])
       }
@@ -873,17 +945,9 @@ module Holocron
       }
     end
 
-    def serialize_version(version)
-      db = Database.db
-      author = db[:workspace_members].where(id: version[:created_by_workspace_member_id]).first
-      reviewer = version[:reviewed_by_workspace_member_id] && db[:workspace_members]
-        .where(id: version[:reviewed_by_workspace_member_id])
-        .first
-      sections = db[:briefing_sections]
-        .where(briefing_version_id: version[:id])
-        .order(:position)
-        .all
-        .map { |section| serialize_section(section) }
+    def serialize_version(version, members_by_id:, sections:)
+      author = members_by_id[version[:created_by_workspace_member_id]]
+      reviewer = members_by_id[version[:reviewed_by_workspace_member_id]]
       {
         id: version[:id],
         version_number: version[:version_number],
@@ -910,7 +974,18 @@ module Holocron
           useful_claims_per_1k_input_tokens: useful_claims_per_1k_tokens(version),
           retrieval: parse_json_object(version[:retrieval_json])
         },
-        sections: sections,
+        sections: sections.map { |section| serialize_section(section) },
+        created_at: iso8601(version[:created_at])
+      }
+    end
+
+    def serialize_version_summary(version, members_by_id:)
+      {
+        id: version[:id],
+        version_number: version[:version_number],
+        status: version[:status],
+        change_summary: version[:change_summary],
+        created_by: serialize_member(members_by_id[version[:created_by_workspace_member_id]]),
         created_at: iso8601(version[:created_at])
       }
     end

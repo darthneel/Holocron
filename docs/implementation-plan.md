@@ -477,7 +477,7 @@ Completion gate:
 
 ## Step 9: Follow-Up Agent and Tools
 
-**Status: Pending**
+**Status: In Progress**
 
 After a meeting, suggest tasks and relationship updates.
 
@@ -489,6 +489,25 @@ Initial tools:
 
 The agent may prepare tool calls, but a workspace member must approve them before
 execution. Tool handlers must validate arguments independently from the model.
+
+Implemented foundation:
+
+- First-class `tasks` records with workspace, meeting, scheduling-request,
+  assignee, creator, priority, status, due date, origin, and optimistic lock data.
+- Immutable `task_state_transitions` beginning with the initial `open` state.
+- Deterministic creation of one briefing-preparation task in the same transaction
+  that creates a meeting and its fallback briefing.
+- Assignment to the scheduling request's scheduler, with the meeting start as the
+  preparation deadline.
+- A stable origin key, synchronous `task.created` audit, task-list API, and task
+  visibility in both the request detail and briefing workbench.
+
+Remaining Step 9 scope:
+
+- Model-proposed `create_task`, `record_interaction`, and
+  `suggest_relationship_update` calls.
+- Human review, editing, approval, rejection, and exactly-once tool execution.
+- Manual task state changes and a complete task-management workspace.
 
 Architectural lesson:
 

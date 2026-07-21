@@ -8,6 +8,7 @@ require "uri"
 require_relative "database"
 require_relative "relationships"
 require_relative "scheduling_request_workflow"
+require_relative "tasks"
 
 module Holocron
   module SchedulingRequests
@@ -273,6 +274,7 @@ module Holocron
         briefing: briefing && {
           id: briefing[:id],
           status: briefing[:status],
+          tasks: Tasks.for_meeting(meeting_id: meeting[:id], workspace: {id: request[:workspace_id]}),
           meeting: {
             id: meeting[:id],
             scheduling_request_id: meeting[:scheduling_request_id],

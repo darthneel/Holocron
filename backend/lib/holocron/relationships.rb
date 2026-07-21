@@ -384,24 +384,77 @@ module Holocron
         .select_append(Sequel[:scheduling_request_people][:role].as(:request_role))
         .order(Sequel[:scheduling_request_people][:role], Sequel[:people][:display_name])
         .all
+      person_ids = person_rows.map { |person| person[:id] }.uniq
+      organization_ids = person_rows.filter_map { |person| person[:organization_id] }.uniq
+      organizations_by_id = db[:organizations]
+        .where(workspace_id: workspace[:id], id: organization_ids)
+        .all
+        .to_h { |organization| [organization[:id], organization] }
+      request_counts_by_person = grouped_count(
+        db[:scheduling_request_people].where(person_id: person_ids),
+        :person_id,
+        distinct: :scheduling_request_id
+      )
+      interaction_counts_by_person = grouped_count(
+        db[:interactions].where(workspace_id: workspace[:id], person_id: person_ids),
+        :person_id
+      )
+      people_counts_by_organization = grouped_count(
+        db[:people].where(workspace_id: workspace[:id], organization_id: organization_ids),
+        :organization_id
+      )
+      request_counts_by_organization = grouped_count(
+        db[:scheduling_request_people]
+          .join(:people, id: :person_id)
+          .where(Sequel[:people][:workspace_id] => workspace[:id], Sequel[:people][:organization_id] => organization_ids),
+        Sequel[:people][:organization_id],
+        result_key: :organization_id,
+        distinct: Sequel[:scheduling_request_people][:scheduling_request_id]
+      )
+      interaction_counts_by_organization = grouped_count(
+        db[:interactions]
+          .join(:people, id: :person_id)
+          .where(Sequel[:people][:workspace_id] => workspace[:id], Sequel[:people][:organization_id] => organization_ids),
+        Sequel[:people][:organization_id],
+        result_key: :organization_id
+      )
       people = person_rows.group_by { |person| person[:id] }.map do |_id, rows|
-        serialize_person(rows.first).merge(request_role: rows.map { |row| row[:request_role] }.uniq.join(" / "))
+        person = rows.first
+        serialize_person_overview(
+          person,
+          organization: person[:organization_id] && organizations_by_id[person[:organization_id]],
+          request_count: request_counts_by_person.fetch(person[:id], 0),
+          interaction_count: interaction_counts_by_person.fetch(person[:id], 0)
+        ).merge(request_role: rows.map { |row| row[:request_role] }.uniq.join(" / "))
       end
-      organization_ids = people.filter_map { |person| person.dig(:organization, :id) }.uniq
-      organizations = organization_ids.map do |organization_id|
-        serialize_organization(db[:organizations].where(id: organization_id).first)
+      organizations = organization_ids.filter_map do |organization_id|
+        organization = organizations_by_id[organization_id]
+        next unless organization
+
+        serialize_organization_overview(
+          organization,
+          people_count: people_counts_by_organization.fetch(organization_id, 0),
+          request_count: request_counts_by_organization.fetch(organization_id, 0),
+          interaction_count: interaction_counts_by_organization.fetch(organization_id, 0)
+        )
       end
 
-      person_ids = people.map { |person| person[:id] }
       interactions = if person_ids.empty?
         []
       else
         db[:interactions]
-          .where(workspace_id: workspace[:id], person_id: person_ids)
-          .reverse_order(:occurred_at)
+          .left_join(:people, id: Sequel[:interactions][:person_id])
+          .left_join(:workspace_members, id: Sequel[:interactions][:authored_by_workspace_member_id])
+          .where(Sequel[:interactions][:workspace_id] => workspace[:id], Sequel[:interactions][:person_id] => person_ids)
+          .select_all(:interactions)
+          .select_append(
+            Sequel[:people][:display_name].as(:person_name),
+            Sequel[:workspace_members][:display_name].as(:author_name)
+          )
+          .reverse_order(Sequel[:interactions][:occurred_at])
           .limit(20)
           .all
-          .map { |interaction| serialize_interaction(interaction).merge(current_request: interaction[:scheduling_request_id] == request_id) }
+          .map { |interaction| serialize_interaction_overview(interaction).merge(current_request: interaction[:scheduling_request_id] == request_id) }
       end
 
       {people: people, organizations: organizations, interactions: interactions}

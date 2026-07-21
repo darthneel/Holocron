@@ -4979,6 +4979,141 @@ a:focus-visible {
   background: var(--charcoal);
 }
 
+/* Selection is a direct action, so list rows clearly advertise that they open. */
+.request-row,
+.briefing-row {
+  position: relative;
+  cursor: pointer;
+  transition: background-color 160ms ease, transform 160ms ease;
+}
+
+.request-row:active,
+.briefing-row:active {
+  transform: scale(0.99);
+}
+
+.request-row.is-loading,
+.briefing-row.is-loading {
+  color: var(--ink-soft);
+}
+
+.request-row.is-loading .request-status,
+.briefing-row.is-loading .briefing-status {
+  opacity: 0;
+}
+
+.request-row.is-loading::after,
+.briefing-row.is-loading::after {
+  position: absolute;
+  top: 16px;
+  right: 15px;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  content: "";
+  animation: item-loading-spin 700ms linear infinite;
+}
+
+.request-panel,
+.briefing-panel {
+  position: relative;
+}
+
+.detail-loading-state {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-raised);
+  color: var(--ink-soft);
+  font: 600 9px var(--font-geist-mono), monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detail-loading-state > span {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: item-loading-spin 700ms linear infinite;
+}
+
+.briefing-inbox-head {
+  min-height: 42px;
+  padding: 13px 15px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--ink-soft);
+  font: 9px var(--font-geist-mono), monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.briefing-sources {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: grid-template-rows 200ms ease, margin-top 200ms ease, opacity 160ms ease, transform 200ms ease;
+}
+
+.briefing-sources.is-open {
+  grid-template-rows: 1fr;
+  margin-top: 10px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.briefing-sources-list {
+  min-height: 0;
+  padding-left: 12px;
+  display: grid;
+  gap: 7px;
+  border-left: 2px solid var(--line-strong);
+}
+
+.briefing-sources > div {
+  min-width: 0;
+  display: block;
+}
+
+.briefing-sources-list > div {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+@keyframes item-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .request-row,
+  .briefing-row,
+  .briefing-sources {
+    transition: none;
+  }
+
+  .request-row.is-loading::after,
+  .briefing-row.is-loading::after,
+  .detail-loading-state > span {
+    animation: none;
+  }
+}
+
 .request-source {
   color: var(--accent);
   font: 650 8px var(--font-geist-mono), monospace;
@@ -5685,4 +5820,40 @@ a:focus-visible {
   .meetings-tabs button {
     min-width: 0;
   }
+}
+
+.meeting-preparation-task,
+.briefing-preparation-task {
+  align-items: flex-start;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.meeting-preparation-task > svg,
+.briefing-preparation-task > svg {
+  flex: 0 0 auto;
+  height: 16px;
+  margin-top: 3px;
+  width: 16px;
+}
+
+.meeting-preparation-task > span,
+.briefing-preparation-task > span {
+  display: grid;
+  gap: 3px;
+}
+
+.meeting-preparation-task strong,
+.meeting-preparation-task small,
+.briefing-preparation-task strong,
+.briefing-preparation-task small {
+  display: block;
+}
+
+.meeting-preparation-task small,
+.briefing-preparation-task small {
+  color: var(--ink-soft);
 }
