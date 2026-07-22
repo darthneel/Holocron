@@ -22,6 +22,7 @@ module Holocron
           if input.include?("[fake:transient-once]") && @calls == 1
             raise TransientError, "Deterministic fake transient failure."
           end
+          return generate_ask_ai(input) if prompt[:task] == "ask_ai"
           return {output: {"requester" => "malformed"}, model: model} if input.include?("[fake:malformed]")
           return generate_briefing(input) if prompt[:task] == "briefing_generation"
           return generate_semantic_burst_label(input) if prompt[:task] == "semantic_burst_labeling"
@@ -78,6 +79,47 @@ module Holocron
         end
 
         private
+
+        def generate_ask_ai(input)
+          manifest = JSON.parse(input)
+          question = manifest.fetch("question")
+          sources = manifest.fetch("sources")
+
+          if question.include?("[fake:malformed]")
+            return {output: {"answer" => "Malformed output."}, model: model}
+          end
+
+          source = sources.first
+          output = if source
+            excerpt = source.fetch("excerpt").to_s.strip
+            claim = "The available interaction states: #{excerpt}"
+            {
+              "answer" => claim,
+              "claims" => [{"text" => claim, "source_refs" => [source.fetch("source_ref")]}],
+              "limitations" => []
+            }
+          else
+            {
+              "answer" => "I could not find enough interaction evidence to answer that question.",
+              "claims" => [],
+              "limitations" => ["No supporting interaction sources were supplied."]
+            }
+          end
+
+          if question.include?("[fake:tool-call]")
+            output["tool_calls"] = [{"name" => "search_database", "arguments" => {}}]
+          elsif question.include?("[fake:unsupported-field]")
+            output["cards"] = [{"title" => "Arbitrary UI"}]
+          end
+
+          {
+            output: output,
+            model: model,
+            provider_request_id: "fake-#{@calls}",
+            input_tokens: input.split.length,
+            output_tokens: output.to_s.split.length
+          }
+        end
 
         def generate_semantic_burst_label(input)
           excerpt = input.split("Passage:\n", 2).last.to_s.strip
