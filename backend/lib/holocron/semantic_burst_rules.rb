@@ -12,8 +12,10 @@ module Holocron
 
     def segments(summary)
       paragraphs = summary.split(/\n{2,}/).map(&:strip).reject(&:empty?)
-      paragraphs = summary.split(/(?<=[.!?])\s+(?=[A-Z0-9])/).map(&:strip) if paragraphs.length == 1
-      paragraphs
+      paragraphs.flat_map do |paragraph|
+        sentences = paragraph.split(/(?<=[.!?])\s+(?=[A-Z0-9])/).map(&:strip).reject(&:empty?)
+        sentences.empty? ? [paragraph] : sentences
+      end
     end
 
     def high_signal?(segment, signal_kind)

@@ -1235,17 +1235,28 @@ class HolocronAppTest < Minitest::Test
       def semantic_burst_labeling(prompt:, schema:)
         allowed_kinds = schema.fetch(:properties).fetch(:kind).fetch(:enum)
         raise "schema did not constrain kinds" unless allowed_kinds == %w[decision commitment concern request other]
+        allowed_statuses = schema.fetch(:properties).fetch(:assertion_status).fetch(:enum)
+        raise "schema did not constrain assertion status" unless allowed_statuses == %w[settled proposed conditional none]
 
         excerpt = prompt.fetch(:input).delete_prefix("Passage:\n")
         output = if excerpt.include?("taking responsibility")
                    {
                      "is_high_signal" => true,
                      "kind" => "commitment",
+                     "assertion_status" => "settled",
+                     "materially_distinct" => true,
                      "confidence" => 0.93,
                      "supporting_excerpt" => "Jordan is taking responsibility for the Harborlight accessibility checklist"
                    }
                  else
-                   {"is_high_signal" => false, "kind" => "other", "confidence" => 0.2, "supporting_excerpt" => ""}
+                   {
+                     "is_high_signal" => false,
+                     "kind" => "other",
+                     "assertion_status" => "none",
+                     "materially_distinct" => true,
+                     "confidence" => 0.2,
+                     "supporting_excerpt" => ""
+                   }
                  end
         Holocron::AI::Result.new(
           status: "succeeded", output: output, provider: "test", model: "test-labeler",
@@ -1269,12 +1280,59 @@ class HolocronAppTest < Minitest::Test
     assert_equal "test", result.fetch(:classifier_provider)
     assert_equal "test-labeler", result.fetch(:classifier_model)
     assert_equal "commitment", candidate.fetch(:kind)
+    assert_equal "settled", candidate.fetch(:assertion_status)
+    assert candidate.fetch(:materially_distinct)
     assert_in_delta 0.93, candidate.fetch(:confidence), 0.000_001
     assert_equal "llm", proposal.fetch(:classification_source)
     assert_includes proposal.fetch(:excerpt), "taking responsibility"
     assert_equal proposal.fetch(:source_id), review.fetch("llm_proposed_bursts").first.fetch("source_id")
     assert_equal "test", review.fetch("run").fetch("classifier_provider")
     assert_operator db[:semantic_labeling_baseline_documents].where(run_id: result.fetch(:id)).count, :>=, baseline.length
+  end
+
+  def test_semantic_burst_labeling_rejects_proposed_decisions_without_changing_thresholds
+    workspace = Holocron::Database.db[:workspaces].where(slug: "cedar-grove-mayor").first
+    evaluation = Holocron::SemanticBurstLabelingEvaluation.new(workspace: workspace)
+    classification = {
+      is_high_signal: true,
+      kind: "decision",
+      assertion_status: "proposed",
+      materially_distinct: true,
+      confidence: 0.99
+    }
+
+    refute evaluation.send(:accepted_classification?, classification)
+    assert_in_delta 0.90, Holocron::SemanticBurstLabelingEvaluation::ACCEPTANCE_THRESHOLDS.fetch("decision")
+
+    vague_request = "Could somebody take a quick look at the outline and tell me where it stops making sense?"
+    assert_operator vague_request.length, :>=, Holocron::SemanticBurstRules::MINIMUM_LENGTH
+    assert evaluation.send(:ambiguous_segment?, vague_request, "background")
+
+    candidates = evaluation.send(
+      :ambiguous_candidates,
+      [
+        "This is a long background sentence describing the meeting without recording any particular outcome or next move.",
+        "This is another long background sentence describing the meeting without recording any particular outcome or next move.",
+        "This is a third long background sentence describing the meeting without recording any particular outcome or next move.",
+        "Could somebody take a quick look at the outline and tell me where it stops making sense for an outside reader?",
+        "The group may agree to a different approach before the next session if the feedback changes materially."
+      ],
+      {}
+    )
+    assert_equal 2, candidates.length
+    assert_equal "signal", candidates.first.fetch(:signal_kind)
+    assert_includes candidates.last.fetch(:segment), "Could somebody"
+  end
+
+  def test_semantic_burst_rules_split_each_paragraph_into_sentences
+    summary = "The group reviewed the draft. Nothing was settled.\n\nI can take the next pass. That should be enough for now."
+
+    assert_equal [
+      "The group reviewed the draft.",
+      "Nothing was settled.",
+      "I can take the next pass.",
+      "That should be enough for now."
+    ], Holocron::SemanticBurstRules.segments(summary)
   end
 
   def test_fused_retrieval_combines_rankers_and_collapses_bursts_to_one_interaction

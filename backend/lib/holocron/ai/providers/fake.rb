@@ -93,6 +93,8 @@ module Holocron
             output: {
               "is_high_signal" => high_signal,
               "kind" => kind,
+              "assertion_status" => high_signal ? "settled" : "none",
+              "materially_distinct" => true,
               "confidence" => high_signal ? 0.95 : 0.2,
               "supporting_excerpt" => high_signal ? excerpt : ""
             },
