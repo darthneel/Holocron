@@ -18,6 +18,7 @@ ENV["AI_EMBEDDING_PROVIDER"] = "fake"
 ENV["AI_EMBEDDING_MODEL"] = "fake-semantic-embedding-v1"
 
 require_relative "../app"
+require_relative "../lib/holocron/semantic_burst_labeling_evaluation"
 
 actual_database_name = Holocron::Database.db.get(Sequel.function(:current_database))
 raise "Refusing to reset non-test database #{actual_database_name}." unless actual_database_name == test_database_name
@@ -1200,6 +1201,80 @@ class HolocronAppTest < Minitest::Test
     assert bursts.none? { |document| document.fetch(:content).include?("thanked the facilities team") }
     assert_operator first.fetch(:burst_records), :>=, bursts.length
     assert_equal 0, second.fetch(:refreshed_records)
+  end
+
+  def test_semantic_burst_labeling_evaluation_snapshots_baseline_and_keeps_index_unchanged
+    db = Holocron::Database.db
+    workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
+    actor = db[:workspace_members].where(workspace_id: workspace.fetch(:id)).first
+    person = semantic_fixture_person(db, workspace: workspace, actor: actor)
+    now = Time.now.utc
+    interaction_id = SecureRandom.uuid
+    implicit_commitment = "Jordan is taking responsibility for the Harborlight accessibility checklist after the meeting, coordinating remaining partner feedback and preparing materials for the August review with the regional access team."
+    summary = [
+      "The Project Harborlight working session reviewed cooling access, public communications, and community outreach across the west side with partner organizations.",
+      implicit_commitment,
+      "The participants also covered background scheduling details, past attendance, and routine coordination topics without recording a final choice."
+    ].join("\n\n")
+    db[:interactions].insert(
+      id: interaction_id,
+      workspace_id: workspace.fetch(:id),
+      person_id: person.fetch(:id),
+      authored_by_workspace_member_id: actor.fetch(:id),
+      interaction_type: "meeting",
+      summary: summary,
+      source_type: "manual",
+      occurred_at: now,
+      created_at: now,
+      updated_at: now
+    )
+    Holocron::SemanticIndex.new(workspace: workspace).refresh_interactions!
+    baseline = db[:semantic_documents].where(workspace_id: workspace.fetch(:id), source_id: interaction_id).order(:id).all
+
+    router = Class.new do
+      def semantic_burst_labeling(prompt:, schema:)
+        allowed_kinds = schema.fetch(:properties).fetch(:kind).fetch(:enum)
+        raise "schema did not constrain kinds" unless allowed_kinds == %w[decision commitment concern request other]
+
+        excerpt = prompt.fetch(:input).delete_prefix("Passage:\n")
+        output = if excerpt.include?("taking responsibility")
+                   {
+                     "is_high_signal" => true,
+                     "kind" => "commitment",
+                     "confidence" => 0.93,
+                     "supporting_excerpt" => "Jordan is taking responsibility for the Harborlight accessibility checklist"
+                   }
+                 else
+                   {"is_high_signal" => false, "kind" => "other", "confidence" => 0.2, "supporting_excerpt" => ""}
+                 end
+        Holocron::AI::Result.new(
+          status: "succeeded", output: output, provider: "test", model: "test-labeler",
+          provider_request_id: "label-test"
+        )
+      end
+    end.new
+
+    result = Holocron::SemanticBurstLabelingEvaluation.new(workspace: workspace, router: router).run
+    unchanged = db[:semantic_documents].where(workspace_id: workspace.fetch(:id), source_id: interaction_id).order(:id).all
+    candidate = db[:semantic_labeling_candidates]
+      .where(run_id: result.fetch(:id), source_id: interaction_id, accepted: true)
+      .first
+    proposal = db[:semantic_labeling_burst_proposals]
+      .where(run_id: result.fetch(:id), source_id: interaction_id, classification_source: "llm")
+      .first
+    review = Holocron::SemanticBurstLabelingEvaluation.export_review(run_id: result.fetch(:id))
+
+    assert_equal baseline, unchanged
+    assert_equal "completed", result.fetch(:status)
+    assert_equal "test", result.fetch(:classifier_provider)
+    assert_equal "test-labeler", result.fetch(:classifier_model)
+    assert_equal "commitment", candidate.fetch(:kind)
+    assert_in_delta 0.93, candidate.fetch(:confidence), 0.000_001
+    assert_equal "llm", proposal.fetch(:classification_source)
+    assert_includes proposal.fetch(:excerpt), "taking responsibility"
+    assert_equal proposal.fetch(:source_id), review.fetch("llm_proposed_bursts").first.fetch("source_id")
+    assert_equal "test", review.fetch("run").fetch("classifier_provider")
+    assert_operator db[:semantic_labeling_baseline_documents].where(run_id: result.fetch(:id)).count, :>=, baseline.length
   end
 
   def test_fused_retrieval_combines_rankers_and_collapses_bursts_to_one_interaction

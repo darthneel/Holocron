@@ -24,6 +24,7 @@ module Holocron
           end
           return {output: {"requester" => "malformed"}, model: model} if input.include?("[fake:malformed]")
           return generate_briefing(input) if prompt[:task] == "briefing_generation"
+          return generate_semantic_burst_label(input) if prompt[:task] == "semantic_burst_labeling"
 
           headers = parse_headers(input)
           requester = parse_identity(headers["from"])
@@ -77,6 +78,30 @@ module Holocron
         end
 
         private
+
+        def generate_semantic_burst_label(input)
+          excerpt = input.split("Passage:\n", 2).last.to_s.strip
+          kind = case excerpt
+                 when /\b(decid(?:e|ed|ing)|agreed|approved|selected|chose)\b/i then "decision"
+                 when /\b(commit(?:ted|ment)?|will|owner|deadline|due|follow.?up|next step)\b/i then "commitment"
+                 when /\b(concern(?:ed)?|object(?:ed|ion)?|oppose(?:d)?|risk|constraint|blocked|delay(?:ed)?|only if|unless|requires?)\b/i then "concern"
+                 when /\b(asked|requested|recommend(?:ed)?|question|unresolved|confirm)\b/i then "request"
+                 else "other"
+                 end
+          high_signal = kind != "other"
+          {
+            output: {
+              "is_high_signal" => high_signal,
+              "kind" => kind,
+              "confidence" => high_signal ? 0.95 : 0.2,
+              "supporting_excerpt" => high_signal ? excerpt : ""
+            },
+            model: model,
+            provider_request_id: "fake-#{@calls}",
+            input_tokens: input.split.length,
+            output_tokens: 0
+          }
+        end
 
         def generate_briefing(input)
           manifest = JSON.parse(input)

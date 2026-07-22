@@ -41,6 +41,10 @@ module Holocron
         request(prompt: prompt, schema: schema, schema_name: "grounded_briefing", reasoning_effort: "medium")
       end
 
+      def semantic_burst_labeling(prompt:, schema:)
+        request(prompt: prompt, schema: schema, schema_name: "semantic_burst_labeling", reasoning_effort: "low")
+      end
+
       private
 
       def request(prompt:, schema:, schema_name:, reasoning_effort:)
@@ -114,19 +118,27 @@ module Holocron
       end
 
       def provider_environment_key
-        @task == :briefing_generation ? "AI_BRIEFING_GENERATION_PROVIDER" : "AI_REQUEST_EXTRACTION_PROVIDER"
+        task_environment_prefix + "_PROVIDER"
       end
 
       def model_environment_key
-        @task == :briefing_generation ? "AI_BRIEFING_GENERATION_MODEL" : "AI_REQUEST_EXTRACTION_MODEL"
+        task_environment_prefix + "_MODEL"
       end
 
       def read_timeout_environment_key
-        @task == :briefing_generation ? "AI_BRIEFING_GENERATION_READ_TIMEOUT" : "AI_REQUEST_EXTRACTION_READ_TIMEOUT"
+        task_environment_prefix + "_READ_TIMEOUT"
       end
 
       def max_attempts_environment_key
-        @task == :briefing_generation ? "AI_BRIEFING_GENERATION_MAX_ATTEMPTS" : "AI_REQUEST_EXTRACTION_MAX_ATTEMPTS"
+        task_environment_prefix + "_MAX_ATTEMPTS"
+      end
+
+      def task_environment_prefix
+        case @task
+        when :briefing_generation then "AI_BRIEFING_GENERATION"
+        when :semantic_burst_labeling then "AI_SEMANTIC_BURST_LABELING"
+        else "AI_REQUEST_EXTRACTION"
+        end
       end
 
       def configured_read_timeout
@@ -148,6 +160,11 @@ module Holocron
           return "gpt-5.6-terra" if provider_name == "openai"
 
           "openai/gpt-5.6-terra"
+        elsif @task == :semantic_burst_labeling
+          return "fake-semantic-burst-labeler-v1" if provider_name == "fake"
+          return "gpt-5.6-luna" if provider_name == "openai"
+
+          "openai/gpt-5.6-luna"
         else
           return "fake-request-extractor-v1" if provider_name == "fake"
           return "gpt-5.6-luna" if provider_name == "openai"

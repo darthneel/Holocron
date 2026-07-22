@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ENV_FILE="$ROOT/../.env.local"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  . "$ENV_FILE"
+  set +a
+fi
+
+if [ "${RUN_LIVE_SEMANTIC_LABELING_EVALUATION:-}" != "1" ]; then
+  echo "Set RUN_LIVE_SEMANTIC_LABELING_EVALUATION=1 to confirm that this command may make billed model requests." >&2
+  exit 2
+fi
+
+if [ "${AI_SEMANTIC_BURST_LABELING_PROVIDER:-fake}" = "fake" ]; then
+  echo "Configure a real AI_SEMANTIC_BURST_LABELING_PROVIDER before running the corpus evaluation." >&2
+  exit 2
+fi
+
+if [ -x /opt/homebrew/opt/ruby/bin/ruby ]; then
+  DEFAULT_RUBY_BIN=/opt/homebrew/opt/ruby/bin/ruby
+else
+  DEFAULT_RUBY_BIN="$(command -v ruby)"
+fi
+
+RUBY_BIN="${RUBY_BIN:-$DEFAULT_RUBY_BIN}"
+BUNDLE_BIN="$(dirname "$RUBY_BIN")/bundle"
+export PATH="$(dirname "$RUBY_BIN"):$PATH"
+
+cd "$ROOT"
+exec "$BUNDLE_BIN" exec "$RUBY_BIN" script/evaluate_semantic_bursts.rb "$@"

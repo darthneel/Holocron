@@ -6,6 +6,7 @@ require "securerandom"
 require "time"
 require_relative "ai/embeddings"
 require_relative "database"
+require_relative "semantic_burst_rules"
 
 module Holocron
   class SemanticIndex
@@ -13,10 +14,10 @@ module Holocron
     DEFAULT_MINIMUM_SIMILARITY = 0.18
     DEFAULT_EMBEDDING_BATCH_SIZE = 100
     RRF_K = 60.0
-    BURST_MINIMUM_SOURCE_LENGTH = 320
-    BURST_MINIMUM_LENGTH = 60
-    BURST_SIGNAL_PATTERN = /\b(decid(?:e|ed|ing)|agree(?:d)?|commit(?:ted|ment)?|will|owner|deadline|due|before|by \w+ \d{1,2}|concern(?:ed)?|object(?:ed|ion)?|oppose(?:d)?|risk|constraint|require(?:d|ment)?|only if|unless|blocked|delay(?:ed)?|asked|requested|recommend(?:ed)?|question|unresolved|follow.?up|next step)\b/i
-    IDENTIFIER_PATTERN = /\b(?:[A-Z]{2,}[\s-]?\d{2,}|\d{1,3}(?:\.\d+)?%|\$\d|\w+[._-]v?\d+|\d{4}-\d{2}-\d{2})\b/
+    BURST_MINIMUM_SOURCE_LENGTH = SemanticBurstRules::MINIMUM_SOURCE_LENGTH
+    BURST_MINIMUM_LENGTH = SemanticBurstRules::MINIMUM_LENGTH
+    BURST_SIGNAL_PATTERN = SemanticBurstRules::SIGNAL_PATTERN
+    IDENTIFIER_PATTERN = SemanticBurstRules::IDENTIFIER_PATTERN
 
     def initialize(workspace:, embedding_provider: nil)
       @workspace = workspace
@@ -279,28 +280,15 @@ module Holocron
     end
 
     def burst_segments(summary)
-      paragraphs = summary.split(/\n{2,}/).map(&:strip).reject(&:empty?)
-      paragraphs = summary.split(/(?<=[.!?])\s+(?=[A-Z0-9])/).map(&:strip) if paragraphs.length == 1
-      paragraphs
+      SemanticBurstRules.segments(summary)
     end
 
     def high_signal_burst?(segment, signal_kind)
-      return false if segment.length < BURST_MINIMUM_LENGTH
-      return true if signal_kind != "background"
-      return true if segment.match?(IDENTIFIER_PATTERN)
-
-      segment.length >= 180
+      SemanticBurstRules.high_signal?(segment, signal_kind)
     end
 
     def burst_signal_kind(segment)
-      case segment
-      when /\b(decid(?:e|ed|ing)|agreed|approved|selected|chose)\b/i then "decision"
-      when /\b(commit(?:ted|ment)?|will|owner|deadline|due|follow.?up|next step|by \w+ \d{1,2})\b/i then "commitment"
-      when /\b(concern(?:ed)?|object(?:ed|ion)?|oppose(?:d)?|risk|constraint|blocked|delay(?:ed)?|only if|unless|requires?)\b/i then "concern"
-      when /\b(asked|requested|recommend(?:ed)?|question|unresolved|confirm)\b/i then "request"
-      else
-        segment.match?(BURST_SIGNAL_PATTERN) ? "signal" : "background"
-      end
+      SemanticBurstRules.signal_kind(segment)
     end
 
     def document(interaction:, unit_type:, unit_key:, position:, content:, metadata:)

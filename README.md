@@ -169,6 +169,27 @@ backfill one workspace. For local demonstration data only, set
 by default. Requests are sent in batches controlled by
 `SEMANTIC_EMBEDDING_BATCH_SIZE` (default `100`).
 
+### Semantic-burst labeling evaluation
+
+To evaluate LLM-assisted burst labeling against the complete workspace interaction
+corpus without changing the active semantic index, configure a real labeling provider
+and run:
+
+```bash
+cd backend
+bundle exec rake db:migrate
+RUN_LIVE_SEMANTIC_LABELING_EVALUATION=1 \
+  AI_SEMANTIC_BURST_LABELING_PROVIDER=openai \
+  AI_SEMANTIC_BURST_LABELING_MODEL=gpt-5.6-luna \
+  bin/evaluate-semantic-bursts
+```
+
+Set `WORKSPACE_SLUG` to evaluate one workspace. The command snapshots the current
+`semantic_documents` rows, records every ambiguous-segment model judgment, and writes
+a JSON review report under `backend/tmp/`; it does not modify active documents or
+embeddings. The report separates added/changed/removed burst proposals and lists every
+LLM-proposed burst with its supporting excerpt and confidence.
+
 ## Retrieval Comparison Scenario
 
 The deterministic resilience scenario contains attendee-heavy history,

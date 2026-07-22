@@ -45,6 +45,7 @@ next-env.d.ts
 /backend/.bundle/
 /backend/db/*.sqlite3
 /backend/tmp/eval-results/
+/backend/tmp/semantic-labeling-review-*.json
 /backend/tmp/restart.txt
 /backend/test/tmp/
 /backend/vendor/bundle/
