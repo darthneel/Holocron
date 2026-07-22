@@ -1,0 +1,327 @@
+.desk-design-lab {
+  --dd-bg: #0d1113;
+  --dd-shell: #121719;
+  --dd-panel: #171d20;
+  --dd-panel-2: #1d2528;
+  --dd-line: #344045;
+  --dd-line-soft: #263034;
+  --dd-text: #f0efed;
+  --dd-muted: #a0a8aa;
+  --dd-coral: #fd7b41;
+  --dd-coral-fill: #3d281f;
+  --dd-blue: #8ab9ca;
+  --dd-blue-fill: #20343c;
+  min-height: 100dvh;
+  padding: 48px clamp(18px, 4vw, 62px) 34px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(253, 123, 65, .15), transparent 27%),
+    radial-gradient(circle at 86% 0%, rgba(84, 131, 148, .18), transparent 29%),
+    var(--dd-bg);
+  color: var(--dd-text);
+  font-family: var(--font-geist-sans), Arial, sans-serif;
+}
+
+.desk-design-lab * { box-sizing: border-box; }
+.desk-design-lab button, .desk-design-lab a { font: inherit; }
+
+.dd-lab-header,
+.dd-concept-picker,
+.dd-concept-summary,
+.dd-stage,
+.dd-lab-footer { width: min(100%, 1480px); margin-right: auto; margin-left: auto; }
+
+.dd-lab-header { display: flex; align-items: end; justify-content: space-between; gap: 40px; }
+.dd-lab-header > div > span,
+.dd-concept-summary > div > span { color: var(--dd-coral); font: 650 9px var(--font-geist-mono), monospace; letter-spacing: .12em; text-transform: uppercase; }
+.dd-lab-header h1 { margin: 9px 0 8px; font-size: clamp(34px, 4vw, 56px); font-weight: 560; letter-spacing: -.055em; line-height: .96; }
+.dd-lab-header p, .dd-concept-summary p { margin: 0; color: var(--dd-muted); font-size: 13px; line-height: 1.5; }
+.dd-lab-header a { display: inline-flex; align-items: center; gap: 8px; padding: 11px 13px; border: 1px solid var(--dd-line); color: var(--dd-text); text-decoration: none; font-size: 11px; }
+.dd-lab-header a:hover { border-color: var(--dd-coral); color: #ffc4aa; }
+.dd-lab-header a svg { width: 13px; }
+
+.dd-concept-picker { margin-top: 30px; display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid var(--dd-line); background: rgba(18, 23, 25, .76); }
+.dd-concept-picker button { min-width: 0; min-height: 50px; padding: 0 15px; display: flex; align-items: center; gap: 12px; border: 0; border-right: 1px solid var(--dd-line); background: transparent; color: var(--dd-muted); cursor: pointer; text-align: left; }
+.dd-concept-picker button:last-child { border-right: 0; }
+.dd-concept-picker button:hover { background: var(--dd-panel); color: var(--dd-text); }
+.dd-concept-picker button.is-active { box-shadow: inset 0 -2px var(--dd-coral); background: var(--dd-panel-2); color: var(--dd-text); }
+.dd-concept-picker button > small { color: var(--dd-coral); font: 8px var(--font-geist-mono), monospace; }
+.dd-concept-picker button > span { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.dd-concept-picker strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-concept-picker em { padding: 3px 5px; background: #3a251e; color: #ffc4aa; font: normal 650 7px var(--font-geist-mono), monospace; letter-spacing: .04em; text-transform: uppercase; }
+
+.dd-concept-summary { padding: 23px 0 18px; display: grid; grid-template-columns: .45fr .55fr; gap: 30px; align-items: end; }
+.dd-concept-summary h2 { margin: 5px 0 0; font-size: 21px; font-weight: 560; letter-spacing: -.03em; }
+.dd-concept-summary p { max-width: 560px; justify-self: end; }
+.dd-stage { min-height: 860px; overflow: hidden; border: 1px solid #3b474c; background: var(--dd-shell); box-shadow: 0 28px 80px rgba(0, 0, 0, .28); }
+
+.dd-product-shell { min-height: 860px; background: var(--dd-shell); }
+.dd-top-navigation { min-height: 104px; border-bottom: 1px solid var(--dd-line); background: #101517; }
+.dd-topline { min-height: 60px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--dd-line-soft); }
+.dd-brand { min-width: 0; display: flex; align-items: center; gap: 9px; }
+.dd-brand > svg { width: 28px; height: 28px; color: var(--dd-text); }
+.dd-brand strong { font-size: 12px; }
+.dd-brand > span { color: #566165; }
+.dd-brand small { overflow: hidden; color: var(--dd-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-user { display: flex; align-items: center; gap: 10px; }
+.dd-user > span { display: grid; justify-items: end; gap: 2px; }
+.dd-user strong { font-size: 9px; }
+.dd-user small { color: var(--dd-muted); font-size: 7px; }
+.dd-user b { width: 29px; height: 29px; display: grid; place-items: center; background: var(--dd-coral); color: #21130e; font-size: 8px; }
+.dd-top-navigation nav { height: 43px; padding: 0 24px; display: flex; align-items: stretch; gap: 25px; }
+.dd-top-navigation nav button { position: relative; padding: 0 2px; display: flex; align-items: center; gap: 7px; border: 0; background: transparent; color: #858f91; cursor: pointer; font-size: 10px; }
+.dd-top-navigation nav button:hover { color: var(--dd-text); }
+.dd-top-navigation nav button.is-active { color: var(--dd-text); }
+.dd-top-navigation nav button.is-active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--dd-coral); content: ""; }
+.dd-top-navigation nav small { color: #646e71; font: 7px var(--font-geist-mono), monospace; }
+.dd-product-shell > main { min-width: 0; padding: 25px 28px 30px; }
+
+.dd-greeting { min-height: 100px; padding: 0 3px 18px; display: flex; align-items: end; justify-content: space-between; gap: 30px; }
+.dd-greeting > div:first-child { min-width: 0; }
+.dd-greeting p { margin: 0 0 6px; color: #f2a17e; font-size: 10px; }
+.dd-greeting h1 { margin: 0; font-size: clamp(27px, 3.5vw, 44px); font-weight: 570; letter-spacing: -.055em; line-height: .95; }
+.dd-greeting > div:first-child > span { display: block; margin-top: 9px; color: var(--dd-muted); font-size: 9px; }
+.dd-greeting.is-compact { min-height: 82px; }
+.dd-greeting.is-compact h1 { font-size: clamp(25px, 3vw, 36px); }
+.dd-greeting.is-compact > div:first-child > span { display: none; }
+.dd-date-controls { position: relative; flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.dd-date-controls button { width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid var(--dd-line); background: var(--dd-panel); color: var(--dd-text); cursor: pointer; transition: border-color 160ms ease, transform 160ms ease; }
+.dd-date-controls button:hover:not(:disabled) { border-color: var(--dd-coral); transform: translateY(-1px); }
+.dd-date-controls button:active:not(:disabled) { transform: translateY(1px); }
+.dd-date-controls button:disabled { cursor: not-allowed; opacity: .32; }
+.dd-date-controls button svg { width: 13px; }
+.dd-date-controls strong { min-width: 92px; text-align: center; font: 9px var(--font-geist-mono), monospace; }
+.dd-direction-cue { position: absolute; right: 37px; bottom: -8px; left: 37px; height: 1px; overflow: hidden; background: var(--dd-line); }
+.dd-direction-cue::after { position: absolute; width: 32%; height: 1px; background: var(--dd-coral); content: ""; animation: dd-cue-forward 280ms cubic-bezier(.16,1,.3,1); }
+.dd-direction-cue.is-back::after { animation-name: dd-cue-back; }
+@keyframes dd-cue-forward { from { left: 0; opacity: 0; } to { left: 68%; opacity: 1; } }
+@keyframes dd-cue-back { from { left: 68%; opacity: 0; } to { left: 0; opacity: 1; } }
+
+.dd-status-key { display: flex; align-items: center; gap: 13px; color: var(--dd-muted); font-size: 7px; }
+.dd-status-key span { display: flex; align-items: center; gap: 5px; }
+.dd-status-key i { width: 7px; height: 7px; border-radius: 50%; }
+.dd-status-key .scheduled { background: var(--dd-coral); }
+.dd-status-key .proposed { background: var(--dd-blue); }
+
+.dd-calendar, .dd-agenda-calendar { min-width: 0; border: 1px solid var(--dd-line); background: #151b1e; }
+.dd-calendar > header, .dd-agenda-calendar > header { min-height: 46px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--dd-line); }
+.dd-calendar > header > div, .dd-agenda-calendar > header > div { display: flex; align-items: center; gap: 8px; }
+.dd-calendar > header svg, .dd-agenda-calendar > header svg { width: 14px; color: var(--dd-coral); }
+.dd-calendar h2, .dd-agenda-calendar h2, .dd-tasks h2 { margin: 0; font-size: 10px; font-weight: 600; }
+.dd-calendar-window { position: relative; min-height: 548px; display: grid; grid-template-columns: 43px repeat(3, minmax(0, 1fr)); grid-template-rows: 43px 1fr; overflow: hidden; will-change: transform, opacity; }
+.slide-forward { animation: dd-slide-forward 300ms cubic-bezier(.16,1,.3,1); }
+.slide-back { animation: dd-slide-back 300ms cubic-bezier(.16,1,.3,1); }
+@keyframes dd-slide-forward { from { opacity: .35; transform: translateX(22px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes dd-slide-back { from { opacity: .35; transform: translateX(-22px); } to { opacity: 1; transform: translateX(0); } }
+.dd-calendar-corner { padding-top: 15px; border-right: 1px solid var(--dd-line); border-bottom: 1px solid var(--dd-line); color: #6d777a; font: 7px var(--font-geist-mono), monospace; text-align: center; }
+.dd-day-heading { display: flex; align-items: center; justify-content: center; gap: 6px; border-right: 1px solid var(--dd-line); border-bottom: 1px solid var(--dd-line); color: var(--dd-muted); }
+.dd-day-heading span { font-size: 8px; }
+.dd-day-heading strong { font-size: 9px; font-weight: 550; }
+.dd-day-heading.is-today { background: rgba(253,123,65,.06); box-shadow: inset 0 -2px var(--dd-coral); color: #ffd0bb; }
+.dd-time-axis { grid-column: 1; grid-row: 2; display: grid; grid-template-rows: repeat(8, 1fr); border-right: 1px solid var(--dd-line); }
+.dd-time-axis span { padding: 5px 5px 0 0; color: #6c7679; font: 7px var(--font-geist-mono), monospace; text-align: right; }
+.dd-time-lines { position: absolute; z-index: 0; top: 43px; right: 0; bottom: 0; left: 43px; display: grid; grid-template-rows: repeat(8, 1fr); pointer-events: none; }
+.dd-time-lines i { border-bottom: 1px solid var(--dd-line-soft); }
+.dd-day-column { grid-row: 2; border-right: 1px solid var(--dd-line-soft); }
+.dd-calendar-event { --event-accent: var(--dd-coral); --event-fill: var(--dd-coral-fill); position: absolute; z-index: 1; top: calc(43px + (var(--event-slot) * ((100% - 43px) / 16)) + 3px); left: calc(43px + (var(--event-day) * ((100% - 43px) / 3)) + 3px); width: calc(((100% - 43px) / 3) - 6px); height: calc((var(--event-span) * ((100% - 43px) / 16)) - 5px); min-height: 29px; padding: 6px 20px 5px 8px; overflow: hidden; border: 0; border-left: 2px solid var(--event-accent); background: var(--event-fill); color: var(--dd-text); cursor: pointer; text-align: left; transition: filter 160ms ease, transform 160ms ease, box-shadow 160ms ease; }
+.dd-calendar-event.is-proposed { --event-accent: var(--dd-blue); --event-fill: rgba(32,52,60,.72); border-top: 1px dashed rgba(138,185,202,.55); border-right: 1px dashed rgba(138,185,202,.35); border-bottom: 1px dashed rgba(138,185,202,.35); }
+.dd-calendar-event:hover { filter: brightness(1.12); transform: translateY(-1px); }
+.dd-calendar-event.is-selected { box-shadow: inset 0 0 0 1px var(--event-accent); filter: brightness(1.14); }
+.dd-calendar-event > span { display: block; color: var(--event-accent); font: 7px var(--font-geist-mono), monospace; }
+.dd-calendar-event strong { display: block; margin-top: 3px; overflow: hidden; font-size: 9px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
+.dd-calendar-event small { display: block; margin-top: 3px; overflow: hidden; color: #a9b0b2; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-calendar-event svg { position: absolute; top: 6px; right: 6px; width: 9px; color: var(--event-accent); }
+
+.dd-meeting-detail { min-width: 0; padding: 18px; border: 1px solid var(--dd-line); background: var(--dd-panel); }
+.dd-meeting-detail > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dd-meeting-detail > header span { color: var(--dd-coral); font: 650 8px var(--font-geist-mono), monospace; letter-spacing: .07em; text-transform: uppercase; }
+.dd-meeting-detail.is-proposed > header span { color: var(--dd-blue); }
+.dd-meeting-detail > header b { color: var(--dd-muted); font: 650 7px var(--font-geist-mono), monospace; text-transform: uppercase; }
+.dd-meeting-detail h2 { margin: 17px 0 7px; font-size: clamp(19px, 2.3vw, 28px); font-weight: 570; letter-spacing: -.045em; line-height: 1; }
+.dd-meeting-detail > p { margin: 0; color: var(--dd-muted); font-size: 9px; }
+.dd-candidate-list { margin-top: 20px; }
+.dd-candidate-list > span { display: block; margin-bottom: 7px; color: #7e888b; font: 7px var(--font-geist-mono), monospace; text-transform: uppercase; }
+.dd-candidate-list button { width: 100%; padding: 9px; display: grid; grid-template-columns: 21px 1fr auto; gap: 8px; align-items: center; border: 0; border-bottom: 1px solid var(--dd-line-soft); background: transparent; color: var(--dd-text); cursor: pointer; text-align: left; }
+.dd-candidate-list button:hover, .dd-candidate-list button.is-active { background: var(--dd-blue-fill); }
+.dd-candidate-list button > i { width: 21px; height: 21px; display: grid; place-items: center; border: 1px solid #526a74; color: var(--dd-blue); font: normal 8px var(--font-geist-mono), monospace; }
+.dd-candidate-list button > span { display: grid; gap: 3px; }
+.dd-candidate-list button strong { font-size: 8px; }
+.dd-candidate-list button small { color: var(--dd-muted); font-size: 7px; }
+.dd-candidate-list button em { color: var(--dd-blue); font: normal 650 6px var(--font-geist-mono), monospace; text-transform: uppercase; }
+.dd-briefing-summary { margin-top: 20px; padding: 13px; display: grid; grid-template-columns: 20px 1fr; gap: 10px; background: var(--dd-coral-fill); }
+.dd-briefing-summary > svg { width: 15px; color: var(--dd-coral); }
+.dd-briefing-summary span { display: grid; gap: 4px; }
+.dd-briefing-summary small { color: #d3987d; font: 7px var(--font-geist-mono), monospace; text-transform: uppercase; }
+.dd-briefing-summary strong { font-size: 10px; }
+.dd-briefing-summary p { margin: 0; color: #bdaca5; font-size: 8px; line-height: 1.4; }
+.dd-meeting-detail dl { margin: 18px 0; border: 1px solid var(--dd-line); }
+.dd-meeting-detail dl > div { padding: 9px 10px; display: grid; grid-template-columns: 70px 1fr; border-bottom: 1px solid var(--dd-line-soft); }
+.dd-meeting-detail dl > div:last-child { border-bottom: 0; }
+.dd-meeting-detail dt { color: #788285; font: 7px var(--font-geist-mono), monospace; text-transform: uppercase; }
+.dd-meeting-detail dd { margin: 0; font-size: 8px; }
+.dd-primary-action { width: 100%; min-height: 36px; padding: 0 11px; display: flex; align-items: center; justify-content: space-between; border: 0; background: var(--dd-coral); color: #21130e; cursor: pointer; font-size: 8px; font-weight: 650; }
+.dd-meeting-detail.is-proposed .dd-primary-action { background: var(--dd-blue); color: #101a1e; }
+.dd-primary-action svg { width: 12px; }
+
+.dd-tasks { border: 1px solid var(--dd-line); background: var(--dd-panel); }
+.dd-tasks > header { min-height: 41px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--dd-line); }
+.dd-tasks > header > div { display: flex; align-items: center; gap: 7px; }
+.dd-tasks > header svg { width: 13px; color: var(--dd-coral); }
+.dd-tasks > header > span { width: 20px; height: 20px; display: grid; place-items: center; background: #293236; color: var(--dd-muted); font: 7px var(--font-geist-mono), monospace; }
+.dd-tasks > div { display: grid; }
+.dd-tasks > div > button { width: 100%; padding: 9px 11px; display: grid; grid-template-columns: 14px 1fr; gap: 8px; border: 0; border-bottom: 1px solid var(--dd-line-soft); background: transparent; color: var(--dd-text); cursor: pointer; text-align: left; }
+.dd-tasks > div > button:last-child { border-bottom: 0; }
+.dd-tasks > div > button:hover { background: #20282b; }
+.dd-tasks > div > button > i { width: 13px; height: 13px; display: grid; place-items: center; border: 1px solid #5a6669; }
+.dd-tasks > div > button > i svg { width: 8px; }
+.dd-tasks > div > button > span { display: grid; gap: 3px; }
+.dd-tasks strong { font-size: 8px; font-weight: 520; }
+.dd-tasks small { color: #7e888b; font-size: 7px; }
+.dd-tasks small.is-urgent { color: #f2a17e; }
+.dd-tasks button.is-done { color: #6f797b; }
+.dd-tasks button.is-done strong { text-decoration: line-through; }
+.dd-tasks button.is-done > i { border-color: #a7c48f; background: #a7c48f; color: #142016; }
+.dd-tasks.is-horizontal > div { grid-template-columns: repeat(3, 1fr); }
+.dd-tasks.is-horizontal > div > button { border-right: 1px solid var(--dd-line-soft); border-bottom: 0; }
+
+/* 1. Balanced Desk */
+.dd-balanced-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(250px, .52fr); gap: 13px; }
+.dd-balanced-grid > aside { display: grid; align-content: start; gap: 12px; }
+
+/* 2. Candidate Desk */
+.dd-candidates > main { background: linear-gradient(118deg, rgba(71,41,31,.35), transparent 38%), var(--dd-shell); }
+.dd-option-ribbon { margin-bottom: 12px; display: grid; grid-template-columns: minmax(250px, 1fr) repeat(3, minmax(150px, .55fr)); border: 1px solid var(--dd-line); background: #151b1e; }
+.dd-option-ribbon > div { padding: 11px 13px; display: flex; align-items: center; gap: 9px; border-right: 1px solid var(--dd-line); }
+.dd-option-ribbon > div > svg { width: 15px; color: var(--dd-blue); }
+.dd-option-ribbon > div > span { display: grid; gap: 3px; }
+.dd-option-ribbon > div strong { font-size: 9px; }
+.dd-option-ribbon > div small { color: var(--dd-muted); font-size: 7px; }
+.dd-option-ribbon > button { min-width: 0; padding: 10px 11px; display: grid; gap: 4px; border: 0; border-right: 1px solid var(--dd-line); background: transparent; color: var(--dd-text); cursor: pointer; text-align: left; }
+.dd-option-ribbon > button:last-child { border-right: 0; }
+.dd-option-ribbon > button:hover, .dd-option-ribbon > button.is-active { background: var(--dd-blue-fill); }
+.dd-option-ribbon > button span { color: var(--dd-blue); font: 7px var(--font-geist-mono), monospace; text-transform: uppercase; }
+.dd-option-ribbon > button strong { overflow: hidden; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.dd-candidate-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(265px, .52fr); gap: 13px; }
+.dd-candidates .dd-calendar-window { min-height: 540px; }
+
+/* 3. Briefing Ledger */
+.dd-ledger > main { background: linear-gradient(90deg, rgba(253,123,65,.05), transparent 32%), #121719; }
+.dd-ledger-grid { display: grid; grid-template-columns: minmax(285px, .48fr) minmax(0, 1.3fr); gap: 13px; }
+.dd-ledger .dd-meeting-detail { border-top: 3px solid var(--dd-coral); background: #161c1f; }
+.dd-ledger .dd-meeting-detail.is-proposed { border-top-color: var(--dd-blue); }
+.dd-ledger .dd-calendar-window { min-height: 511px; }
+.dd-ledger > main > .dd-tasks { margin-top: 12px; }
+
+/* 4. Agenda Desk */
+.dd-agenda-grid { display: grid; grid-template-columns: minmax(0, 1fr) 245px; gap: 13px; }
+.dd-agenda-calendar > header { min-height: 44px; }
+.dd-agenda-days { min-height: 430px; display: grid; grid-template-columns: repeat(3, 1fr); will-change: transform, opacity; }
+.dd-agenda-days > article { min-width: 0; border-right: 1px solid var(--dd-line); }
+.dd-agenda-days > article:last-child { border-right: 0; }
+.dd-agenda-days > article > header { height: 42px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--dd-line); color: var(--dd-muted); }
+.dd-agenda-days > article > header span { font-size: 8px; }
+.dd-agenda-days > article > header strong { font-size: 9px; }
+.dd-agenda-days > article.is-today > header { box-shadow: inset 0 -2px var(--dd-coral); background: rgba(253,123,65,.05); color: #ffd0bb; }
+.dd-agenda-days > article > div { padding: 8px; display: grid; align-content: start; gap: 7px; }
+.dd-agenda-event { --agenda-accent: var(--dd-coral); width: 100%; min-height: 64px; padding: 9px; display: grid; grid-template-columns: 48px 1fr 10px; gap: 8px; border: 0; border-left: 2px solid var(--agenda-accent); background: var(--dd-coral-fill); color: var(--dd-text); cursor: pointer; text-align: left; }
+.dd-agenda-event.is-proposed { --agenda-accent: var(--dd-blue); border-top: 1px dashed rgba(138,185,202,.45); border-right: 1px dashed rgba(138,185,202,.3); border-bottom: 1px dashed rgba(138,185,202,.3); background: rgba(32,52,60,.72); }
+.dd-agenda-event.is-selected { box-shadow: inset 0 0 0 1px var(--agenda-accent); }
+.dd-agenda-event time { color: var(--agenda-accent); font: 7px var(--font-geist-mono), monospace; }
+.dd-agenda-event > span { display: grid; align-content: start; gap: 5px; }
+.dd-agenda-event strong { font-size: 8px; line-height: 1.25; }
+.dd-agenda-event small { color: var(--dd-muted); font-size: 7px; }
+.dd-agenda-event svg { width: 9px; color: var(--agenda-accent); }
+.dd-open-day { min-height: 70px; padding: 12px; display: flex; align-items: center; gap: 8px; border: 1px dashed var(--dd-line); color: #718084; }
+.dd-open-day svg { width: 13px; }
+.dd-open-day span { font-size: 8px; }
+.dd-agenda-grid > aside { display: grid; align-content: start; gap: 12px; }
+.dd-attention { padding: 16px; border: 1px solid var(--dd-line); background: linear-gradient(145deg, #243b44, #192226 76%); }
+.dd-attention span { color: var(--dd-blue); font: 650 7px var(--font-geist-mono), monospace; text-transform: uppercase; }
+.dd-attention strong { display: block; margin-top: 10px; font-size: 14px; }
+.dd-attention p { margin: 6px 0 0; color: var(--dd-muted); font-size: 8px; line-height: 1.45; }
+.dd-agenda > main > .dd-meeting-detail.is-band { margin-top: 12px; padding: 13px 15px; display: grid; grid-template-columns: minmax(180px, .8fr) minmax(200px, .65fr) minmax(300px, 1.4fr) 160px; align-items: center; gap: 16px; }
+.dd-meeting-detail.is-band > header { display: grid; justify-items: start; }
+.dd-meeting-detail.is-band h2 { margin: 0; font-size: 17px; }
+.dd-meeting-detail.is-band > p { display: none; }
+.dd-meeting-detail.is-band .dd-candidate-list { margin: 0; display: grid; grid-template-columns: repeat(3, 1fr); }
+.dd-meeting-detail.is-band .dd-candidate-list > span { grid-column: 1 / -1; }
+.dd-meeting-detail.is-band .dd-candidate-list button { padding: 6px; grid-template-columns: 17px 1fr; }
+.dd-meeting-detail.is-band .dd-candidate-list button em { display: none; }
+.dd-meeting-detail.is-band dl { margin: 0; }
+.dd-meeting-detail.is-band .dd-primary-action { min-width: 150px; }
+
+/* 5. Gradient Desk */
+.dd-gradient { background: radial-gradient(circle at 88% 17%, rgba(76,130,149,.2), transparent 31%), radial-gradient(circle at 8% 24%, rgba(253,123,65,.14), transparent 34%), #121719; }
+.dd-gradient .dd-top-navigation { background: rgba(15,20,22,.9); }
+.dd-gradient .dd-greeting { min-height: 125px; margin: -25px -28px 18px; padding: 24px 31px 20px; background: linear-gradient(112deg, rgba(96,48,32,.75), rgba(27,49,57,.84) 58%, rgba(20,31,35,.62)); }
+.dd-gradient .dd-greeting > div:first-child > span { color: #c1cbcc; }
+.dd-gradient-grid { display: grid; grid-template-columns: minmax(0, 1.28fr) minmax(260px, .52fr); gap: 13px; }
+.dd-gradient-grid > aside { display: grid; align-content: start; gap: 12px; }
+.dd-gradient .dd-calendar, .dd-gradient .dd-meeting-detail, .dd-gradient .dd-tasks { background: rgba(23,29,32,.88); }
+.dd-gradient-signal { padding: 15px; border: 1px solid var(--dd-line); background: linear-gradient(145deg, #39261f, #1c292e); }
+.dd-gradient-signal span { color: #f2a17e; font: 650 7px var(--font-geist-mono), monospace; text-transform: uppercase; }
+.dd-gradient-signal strong { display: block; margin-top: 9px; font-size: 14px; }
+.dd-gradient-signal p { margin: 5px 0 0; color: var(--dd-muted); font-size: 8px; line-height: 1.45; }
+.dd-gradient > main > .dd-tasks { margin-top: 12px; }
+
+.dd-lab-footer { padding-top: 15px; display: flex; justify-content: space-between; gap: 20px; color: #747e81; font-size: 8px; }
+
+@media (max-width: 1040px) {
+  .dd-balanced-grid, .dd-candidate-grid, .dd-gradient-grid { grid-template-columns: minmax(0, 1fr) 235px; }
+  .dd-ledger-grid { grid-template-columns: 250px minmax(0, 1fr); }
+  .dd-option-ribbon { grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(120px, .5fr)); }
+  .dd-agenda > main > .dd-meeting-detail.is-band { grid-template-columns: 160px 1fr 1.5fr; }
+  .dd-meeting-detail.is-band .dd-primary-action { grid-column: 3; }
+}
+
+@media (max-width: 860px) {
+  .desk-design-lab { padding: 32px 12px; }
+  .dd-lab-header a { display: none; }
+  .dd-concept-picker { grid-template-columns: repeat(5, minmax(110px, 1fr)); overflow-x: auto; }
+  .dd-concept-picker button { min-width: 112px; }
+  .dd-concept-picker em { display: none; }
+  .dd-concept-summary { grid-template-columns: 1fr; gap: 7px; }
+  .dd-concept-summary p { justify-self: start; }
+  .dd-stage { overflow: hidden; }
+  .dd-product-shell { min-width: 0; }
+  .dd-top-navigation nav { gap: 18px; overflow-x: auto; }
+  .dd-top-navigation nav button { flex: 0 0 auto; }
+  .dd-product-shell > main { padding: 23px 20px 26px; }
+  .dd-balanced-grid,
+  .dd-candidate-grid,
+  .dd-ledger-grid,
+  .dd-agenda-grid,
+  .dd-gradient-grid { grid-template-columns: 1fr; }
+  .dd-balanced-grid > aside,
+  .dd-gradient-grid > aside { grid-template-columns: 1fr 1fr; }
+  .dd-ledger-grid .dd-meeting-detail { order: 2; }
+  .dd-ledger-grid .dd-calendar { order: 1; }
+  .dd-option-ribbon { grid-template-columns: repeat(3, 1fr); }
+  .dd-option-ribbon > div { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid var(--dd-line); }
+  .dd-agenda-grid > aside { grid-template-columns: 1fr 1fr; }
+  .dd-agenda > main > .dd-meeting-detail.is-band { display: block; }
+  .dd-meeting-detail.is-band h2,
+  .dd-meeting-detail.is-band .dd-candidate-list,
+  .dd-meeting-detail.is-band dl,
+  .dd-meeting-detail.is-band .dd-primary-action { margin-top: 14px; }
+  .dd-gradient .dd-greeting { margin-right: -20px; margin-left: -20px; padding-right: 23px; padding-left: 23px; }
+}
+
+@media (max-width: 620px) {
+  .desk-design-lab { padding: 24px 9px; }
+  .dd-lab-header h1 { font-size: 36px; }
+  .dd-lab-header p { font-size: 11px; }
+  .dd-concept-picker { grid-template-columns: repeat(5, 118px); }
+  .dd-lab-footer { display: grid; }
+  .dd-greeting { align-items: start; flex-direction: column; gap: 16px; }
+  .dd-date-controls { align-self: flex-end; }
+  .dd-balanced-grid > aside,
+  .dd-gradient-grid > aside,
+  .dd-agenda-grid > aside { grid-template-columns: 1fr; }
+  .dd-tasks.is-horizontal > div { grid-template-columns: 1fr; }
+  .dd-tasks.is-horizontal > div > button { border-right: 0; border-bottom: 1px solid var(--dd-line-soft); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide-forward, .slide-back, .dd-direction-cue::after { animation: none; }
+  .dd-calendar-event, .dd-date-controls button { transition: none; }
+}

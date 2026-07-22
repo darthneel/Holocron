@@ -1,5 +1,9 @@
 # Holocron Implementation Plan
 
+The strict, read-only Ask Holocron MVP is specified separately in
+[`docs/ask-holocron-mvp.md`](ask-holocron-mvp.md). Its phases intentionally reuse
+the existing interaction index before any broader knowledge or priority work.
+
 ## Purpose
 
 Holocron is a domain-informed principal-operations prototype with two goals:

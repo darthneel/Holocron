@@ -10,8 +10,9 @@ import {
   CalendarCheck,
   CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
-  Clock3,
   Inbox,
   Link2,
   ListTodo,
@@ -20,7 +21,6 @@ import {
   Save,
   Sparkles,
   ScrollText,
-  ShieldCheck,
   UserPlus,
   UserRound,
   UserRoundPlus,
@@ -80,6 +80,62 @@ type MeetingsView = "requests" | "briefings";
 type LoadingView = WorkspaceView | "meeting-briefings";
 type WorkspaceTheme = "dark" | "light";
 type LoadingItem = { kind: "request" | "briefing"; id: string } | null;
+
+type FoundationCalendarEvent = {
+  id: string;
+  day: string;
+  title: string;
+  time: string;
+  startMinutes: number;
+  durationMinutes: number;
+  status: "scheduled" | "proposed";
+  option?: string;
+};
+
+type FoundationCalendarDay = {
+  key: string;
+  weekday: string;
+  month: string;
+  date: string;
+  isToday?: boolean;
+};
+
+const foundationCalendarDays: FoundationCalendarDay[] = [
+  {key: "2026-07-20", weekday: "Monday", month: "Jul", date: "20"},
+  {key: "2026-07-21", weekday: "Tuesday", month: "Jul", date: "21"},
+  {key: "2026-07-22", weekday: "Wednesday", month: "Jul", date: "22", isToday: true},
+  {key: "2026-07-23", weekday: "Thursday", month: "Jul", date: "23"},
+  {key: "2026-07-24", weekday: "Friday", month: "Jul", date: "24"},
+  {key: "2026-07-27", weekday: "Monday", month: "Jul", date: "27"},
+  {key: "2026-07-28", weekday: "Tuesday", month: "Jul", date: "28"},
+];
+
+const foundationCalendarEvents: FoundationCalendarEvent[] = [
+  {id: "cabinet-priorities", day: "2026-07-20", title: "Cabinet priorities", time: "8:30 AM", startMinutes: 30, durationMinutes: 60, status: "scheduled"},
+  {id: "arts-grant-a", day: "2026-07-20", title: "Arts grant conversation", time: "1:00 PM", startMinutes: 300, durationMinutes: 45, status: "proposed", option: "Option 1 of 2"},
+  {id: "arts-grant-b", day: "2026-07-20", title: "Arts grant conversation", time: "3:30 PM", startMinutes: 450, durationMinutes: 45, status: "proposed", option: "Option 2 of 2"},
+  {id: "mobility-a", day: "2026-07-21", title: "Regional mobility sync", time: "10:00 AM", startMinutes: 120, durationMinutes: 45, status: "proposed", option: "Option 1 of 3"},
+  {id: "mobility-b", day: "2026-07-21", title: "Regional mobility sync", time: "1:30 PM", startMinutes: 330, durationMinutes: 45, status: "proposed", option: "Option 2 of 3"},
+  {id: "mobility-c", day: "2026-07-21", title: "Regional mobility sync", time: "4:00 PM", startMinutes: 480, durationMinutes: 45, status: "proposed", option: "Option 3 of 3"},
+  {id: "school-safety", day: "2026-07-22", title: "School safety briefing", time: "9:00 AM", startMinutes: 60, durationMinutes: 75, status: "scheduled"},
+  {id: "budget-review", day: "2026-07-22", title: "Budget review", time: "11:30 AM", startMinutes: 210, durationMinutes: 60, status: "scheduled"},
+  {id: "small-business", day: "2026-07-22", title: "Small business roundtable", time: "2:00 PM", startMinutes: 360, durationMinutes: 75, status: "scheduled"},
+  {id: "housing-coalition", day: "2026-07-23", title: "Housing coalition", time: "9:30 AM", startMinutes: 90, durationMinutes: 45, status: "proposed", option: "Option 1 of 2"},
+  {id: "housing-coalition-b", day: "2026-07-23", title: "Housing coalition", time: "2:30 PM", startMinutes: 390, durationMinutes: 45, status: "proposed", option: "Option 2 of 2"},
+  {id: "education-leads", day: "2026-07-23", title: "Education leads", time: "11:00 AM", startMinutes: 180, durationMinutes: 60, status: "scheduled"},
+  {id: "weekly-debrief", day: "2026-07-24", title: "Weekly debrief", time: "10:00 AM", startMinutes: 120, durationMinutes: 60, status: "scheduled"},
+  {id: "press-prep", day: "2026-07-24", title: "Press preparation", time: "1:00 PM", startMinutes: 300, durationMinutes: 45, status: "scheduled"},
+  {id: "transportation", day: "2026-07-27", title: "Transportation cabinet", time: "9:00 AM", startMinutes: 60, durationMinutes: 60, status: "scheduled"},
+  {id: "community-health", day: "2026-07-27", title: "Community health partners", time: "2:00 PM", startMinutes: 360, durationMinutes: 45, status: "proposed", option: "Option 1 of 2"},
+  {id: "community-health-b", day: "2026-07-28", title: "Community health partners", time: "10:30 AM", startMinutes: 150, durationMinutes: 45, status: "proposed", option: "Option 2 of 2"},
+  {id: "chiefs-sync", day: "2026-07-28", title: "Chiefs of staff sync", time: "3:00 PM", startMinutes: 420, durationMinutes: 60, status: "scheduled"},
+];
+
+const foundationOpenTasks = [
+  {id: "school-safety-points", title: "Approve school safety talking points", due: "Due 8:45 AM", tone: "urgent"},
+  {id: "mobility-windows", title: "Respond to mobility candidate windows", due: "Due today", tone: "standard"},
+  {id: "roundtable-list", title: "Review roundtable attendee list", due: "Due Thursday", tone: "standard"},
+] as const;
 
 function briefingListItems(body: string) {
   return body
@@ -746,7 +802,7 @@ export default function Home() {
   const [briefings, setBriefings] = useState<BriefingListItem[]>([]);
   const [briefingsLoaded, setBriefingsLoaded] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[] | null>(null);
-  const [activeView, setActiveView] = useState<WorkspaceView>("meetings");
+  const [activeView, setActiveView] = useState<WorkspaceView>("foundation");
   const [meetingsView, setMeetingsView] = useState<MeetingsView>("requests");
   const [loadingView, setLoadingView] = useState<LoadingView | null>(null);
   const [loadingItem, setLoadingItem] = useState<LoadingItem>(null);
@@ -970,7 +1026,7 @@ export default function Home() {
       }
 
       setSession(sessionBody);
-      setActiveView("meetings");
+      setActiveView("foundation");
       setMeetingsView("requests");
       await loadStartup();
     } catch (requestError) {
@@ -1413,7 +1469,7 @@ export default function Home() {
     setBriefings([]);
     setBriefingsLoaded(false);
     setAuditEvents(null);
-    setActiveView("meetings");
+    setActiveView("foundation");
     setMeetingsView("requests");
     setLoadingView(null);
     setSelectedRequest(null);
@@ -1511,9 +1567,9 @@ export default function Home() {
           </div>
         </div>
         <nav className="workspace-nav" aria-label="Workspace sections">
-          <button type="button" aria-label="Meetings" className={activeView === "meetings" ? "is-active" : ""} aria-current={activeView === "meetings" ? "page" : undefined} onClick={() => void openWorkspaceView("meetings")}><small aria-hidden="true">01</small><span>Meetings</span></button>
-          <button type="button" aria-label="Relationships" className={activeView === "relationships" ? "is-active" : ""} aria-current={activeView === "relationships" ? "page" : undefined} onClick={() => void openWorkspaceView("relationships")}><small aria-hidden="true">02</small><span>Relationships</span></button>
-          <button type="button" aria-label="Foundation" className={activeView === "foundation" ? "is-active" : ""} aria-current={activeView === "foundation" ? "page" : undefined} onClick={() => void openWorkspaceView("foundation")}><small aria-hidden="true">03</small><span>Foundation</span></button>
+          <button type="button" aria-label="Foundation" className={activeView === "foundation" ? "is-active" : ""} aria-current={activeView === "foundation" ? "page" : undefined} onClick={() => void openWorkspaceView("foundation")}><small aria-hidden="true">01</small><span>Foundation</span></button>
+          <button type="button" aria-label="Meetings" className={activeView === "meetings" ? "is-active" : ""} aria-current={activeView === "meetings" ? "page" : undefined} onClick={() => void openWorkspaceView("meetings")}><small aria-hidden="true">02</small><span>Meetings</span></button>
+          <button type="button" aria-label="Relationships" className={activeView === "relationships" ? "is-active" : ""} aria-current={activeView === "relationships" ? "page" : undefined} onClick={() => void openWorkspaceView("relationships")}><small aria-hidden="true">03</small><span>Relationships</span></button>
           <button type="button" aria-label="Members" className={activeView === "members" ? "is-active" : ""} aria-current={activeView === "members" ? "page" : undefined} onClick={() => void openWorkspaceView("members")}><small aria-hidden="true">04</small><span>Members</span></button>
           <button type="button" aria-label="Audit log" className={activeView === "audit" ? "is-active" : ""} aria-current={activeView === "audit" ? "page" : undefined} onClick={() => void openWorkspaceView("audit")}><small aria-hidden="true">05</small><span>Audit log</span></button>
         </nav>
@@ -1650,15 +1706,12 @@ export default function Home() {
             />
           ) : null}
 
-          {activeView === "foundation" ? <section id="foundation" className="workspace-section overview-section">
-            <div className="section-heading-row compact"><div><p className="eyebrow">Project foundation</p><h2>{foundation.workspace.name}</h2></div><span className="status-badge"><i aria-hidden="true" /> Active</span></div>
-            <div className="stat-grid">
-              <article className="stat-item"><UserRound aria-hidden="true" /><span>Principal</span><strong>{foundation.principal?.display_name ?? "Unassigned"}</strong></article>
-              <article className="stat-item"><Inbox aria-hidden="true" /><span>Requests</span><strong>{requests.length}</strong></article>
-              <article className="stat-item"><Clock3 aria-hidden="true" /><span>Timezone</span><strong>{foundation.workspace.timezone}</strong></article>
-              <article className="stat-item"><ShieldCheck aria-hidden="true" /><span>Retention</span><strong>{foundation.workspace.retention_days} days</strong></article>
-            </div>
-          </section> : null}
+          {activeView === "foundation" ? <FoundationDashboard
+            userName={session.display_name}
+            principalName={foundation.principal?.display_name ?? "the principal"}
+            onOpenScheduled={() => void openMeetingsView("briefings")}
+            onOpenProposed={() => void openMeetingsView("requests")}
+          /> : null}
 
           {activeView === "members" ? <section id="members" className="workspace-section overview-section">
             <div className="section-heading-row compact"><div><p className="eyebrow">Office directory</p><h2>Workspace members</h2></div><span className="section-count">{foundation.members.length} members</span></div>
@@ -1678,6 +1731,139 @@ export default function Home() {
         </main>
       </div>
     </div>
+  );
+}
+
+function FoundationDashboard({userName, principalName, onOpenScheduled, onOpenProposed}: {
+  userName: string;
+  principalName: string;
+  onOpenScheduled: () => void;
+  onOpenProposed: () => void;
+}) {
+  const [calendarStart, setCalendarStart] = useState(2);
+  const [calendarDirection, setCalendarDirection] = useState<"previous" | "next">("next");
+  const [completedTasks, setCompletedTasks] = useState<Record<string, boolean>>({});
+  const visibleDays = foundationCalendarDays.slice(calendarStart, calendarStart + 3);
+  const firstName = userName.split(" ")[0] || userName;
+  const hour = Number(new Intl.DateTimeFormat("en", {
+    hour: "2-digit",
+    hourCycle: "h23",
+    timeZone: OFFICE_TIME_ZONE,
+  }).format(new Date()));
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const openTaskCount = foundationOpenTasks.filter((task) => !completedTasks[task.id]).length;
+
+  function shiftCalendar(direction: "previous" | "next") {
+    const delta = direction === "next" ? 1 : -1;
+    const nextStart = Math.max(0, Math.min(foundationCalendarDays.length - 3, calendarStart + delta));
+    if (nextStart === calendarStart) return;
+    setCalendarDirection(direction);
+    setCalendarStart(nextStart);
+  }
+
+  return (
+    <section id="foundation" className="workspace-section foundation-dashboard">
+      <div className="foundation-dashboard-heading">
+        <div>
+          <p className="eyebrow">Foundation</p>
+          <h1 suppressHydrationWarning>{greeting}, {firstName}</h1>
+          <p>Here is where {principalName}&apos;s time and your attention meet.</p>
+        </div>
+        <div className="foundation-calendar-actions" aria-label="Calendar navigation">
+          <div>
+            <strong>{visibleDays[0]?.month} {visibleDays[0]?.date} to {visibleDays[2]?.month} {visibleDays[2]?.date}</strong>
+            <span>Three-day desk view</span>
+          </div>
+          <button type="button" onClick={() => shiftCalendar("previous")} disabled={calendarStart === 0} aria-label="Show previous three days">
+            <ChevronLeft aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => shiftCalendar("next")} disabled={calendarStart === foundationCalendarDays.length - 3} aria-label="Show next three days">
+            <ChevronRight aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      <div className="foundation-dashboard-grid">
+        <div className="foundation-calendar-card">
+          <div className="foundation-calendar-card-head">
+            <div>
+              <CalendarDays aria-hidden="true" />
+              <span><strong>Principal&apos;s calendar</strong><small>8:00 AM to 6:00 PM</small></span>
+            </div>
+            <div className="foundation-calendar-legend" aria-label="Meeting status legend">
+              <span className="is-scheduled"><i aria-hidden="true" /> Scheduled</span>
+              <span className="is-proposed"><i aria-hidden="true" /> Proposed</span>
+            </div>
+          </div>
+
+          <div className="foundation-calendar-scroll">
+            <div className={`foundation-calendar-frame foundation-calendar-slide-${calendarDirection}`} key={calendarStart}>
+              <div className="foundation-time-spacer" />
+              {visibleDays.map((day) => (
+                <div className={`foundation-day-heading ${day.isToday ? "is-today" : ""}`} key={`heading-${day.key}`}>
+                  <span>{day.weekday}</span>
+                  <strong>{day.month} {day.date}</strong>
+                  {day.isToday ? <small>Today</small> : null}
+                </div>
+              ))}
+
+              <div className="foundation-time-axis" aria-hidden="true">
+                {["8 AM", "9 AM", "10 AM", "11 AM", "12 PM", "1 PM", "2 PM", "3 PM", "4 PM", "5 PM", "6 PM"].map((label) => <span key={label}>{label}</span>)}
+              </div>
+              {visibleDays.map((day) => (
+                <div className="foundation-day-lane" key={day.key} aria-label={`${day.weekday}, ${day.month} ${day.date}`}>
+                  {foundationCalendarEvents.filter((event) => event.day === day.key).map((event) => (
+                    <button
+                      className={`foundation-calendar-event is-${event.status}`}
+                      style={{top: `${event.startMinutes / 60 * 52}px`, height: `${Math.max(42, event.durationMinutes / 60 * 52)}px`}}
+                      type="button"
+                      key={event.id}
+                      onClick={event.status === "scheduled" ? onOpenScheduled : onOpenProposed}
+                      aria-label={`${event.title}, ${event.time}, ${event.status}${event.option ? `, ${event.option}` : ""}`}
+                    >
+                      <span>{event.option ?? "Scheduled"}</span>
+                      <strong>{event.title}</strong>
+                      <small>{event.time}</small>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <aside className="foundation-open-tasks" aria-labelledby="foundation-tasks-title">
+          <div className="foundation-open-tasks-head">
+            <span><ListTodo aria-hidden="true" /><strong id="foundation-tasks-title">Open tasks</strong></span>
+            <small>{openTaskCount} open</small>
+          </div>
+          <div className="foundation-task-list">
+            {foundationOpenTasks.map((task) => {
+              const isComplete = Boolean(completedTasks[task.id]);
+              return (
+                <button
+                  className={`${task.tone === "urgent" ? "is-urgent" : ""} ${isComplete ? "is-complete" : ""}`}
+                  type="button"
+                  key={task.id}
+                  aria-pressed={isComplete}
+                  onClick={() => setCompletedTasks((current) => ({...current, [task.id]: !current[task.id]}))}
+                >
+                  <span className="foundation-task-check" aria-hidden="true">{isComplete ? <CheckCircle2 /> : null}</span>
+                  <span><strong>{task.title}</strong><small>{isComplete ? "Completed" : task.due}</small></span>
+                </button>
+              );
+            })}
+          </div>
+          <p>Mark an item complete as you clear it.</p>
+        </aside>
+      </div>
+
+      <div className="foundation-wave-gradient" aria-hidden="true">
+        <span className="foundation-wave-one" />
+        <span className="foundation-wave-two" />
+        <span className="foundation-wave-three" />
+      </div>
+    </section>
   );
 }
 
