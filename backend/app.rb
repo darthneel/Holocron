@@ -6,6 +6,7 @@ require "uri"
 require_relative "lib/holocron/http_middleware"
 require_relative "lib/holocron/database"
 require_relative "lib/holocron/briefings"
+require_relative "lib/holocron/calendar"
 require_relative "lib/holocron/relationships"
 require_relative "lib/holocron/request_extractions"
 require_relative "lib/holocron/scheduling_requests"
@@ -88,6 +89,23 @@ module Holocron
           end
 
           {tasks: Tasks.list(workspace: workspace)}
+        end
+
+        r.get "calendar" do
+          workspace = current_workspace
+          unless workspace
+            response.status = 503
+            next({error: "Foundation data has not been seeded."})
+          end
+
+          Calendar.list(
+            workspace: workspace,
+            start_date: r.params["start_date"],
+            end_date: r.params["end_date"]
+          )
+        rescue Calendar::ValidationError => error
+          response.status = 422
+          {error: error.message}
         end
 
         r.on "briefings" do

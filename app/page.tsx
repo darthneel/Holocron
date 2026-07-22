@@ -27,7 +27,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { HolocronMark } from "./holocron-mark";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9292";
@@ -81,55 +81,28 @@ type LoadingView = WorkspaceView | "meeting-briefings";
 type WorkspaceTheme = "dark" | "light";
 type LoadingItem = { kind: "request" | "briefing"; id: string } | null;
 
-type FoundationCalendarEvent = {
+type FoundationCalendarEntry = {
   id: string;
-  day: string;
+  kind: "scheduled" | "proposed";
   title: string;
-  time: string;
-  startMinutes: number;
-  durationMinutes: number;
-  status: "scheduled" | "proposed";
-  option?: string;
+  meeting_id?: string;
+  briefing_id?: string | null;
+  scheduling_request_id: string;
+  candidate_window_id?: string;
+  candidate_date?: string;
+  starts_at: string | null;
+  ends_at: string | null;
+  location?: string | null;
+  notes?: string | null;
+  option_label?: string;
+  request_status?: string;
 };
 
-type FoundationCalendarDay = {
-  key: string;
-  weekday: string;
-  month: string;
-  date: string;
-  isToday?: boolean;
+type FoundationCalendar = {
+  timezone: string;
+  range: {start_date: string; end_date: string};
+  entries: FoundationCalendarEntry[];
 };
-
-const foundationCalendarDays: FoundationCalendarDay[] = [
-  {key: "2026-07-20", weekday: "Monday", month: "Jul", date: "20"},
-  {key: "2026-07-21", weekday: "Tuesday", month: "Jul", date: "21"},
-  {key: "2026-07-22", weekday: "Wednesday", month: "Jul", date: "22", isToday: true},
-  {key: "2026-07-23", weekday: "Thursday", month: "Jul", date: "23"},
-  {key: "2026-07-24", weekday: "Friday", month: "Jul", date: "24"},
-  {key: "2026-07-27", weekday: "Monday", month: "Jul", date: "27"},
-  {key: "2026-07-28", weekday: "Tuesday", month: "Jul", date: "28"},
-];
-
-const foundationCalendarEvents: FoundationCalendarEvent[] = [
-  {id: "cabinet-priorities", day: "2026-07-20", title: "Cabinet priorities", time: "8:30 AM", startMinutes: 30, durationMinutes: 60, status: "scheduled"},
-  {id: "arts-grant-a", day: "2026-07-20", title: "Arts grant conversation", time: "1:00 PM", startMinutes: 300, durationMinutes: 45, status: "proposed", option: "Option 1 of 2"},
-  {id: "arts-grant-b", day: "2026-07-20", title: "Arts grant conversation", time: "3:30 PM", startMinutes: 450, durationMinutes: 45, status: "proposed", option: "Option 2 of 2"},
-  {id: "mobility-a", day: "2026-07-21", title: "Regional mobility sync", time: "10:00 AM", startMinutes: 120, durationMinutes: 45, status: "proposed", option: "Option 1 of 3"},
-  {id: "mobility-b", day: "2026-07-21", title: "Regional mobility sync", time: "1:30 PM", startMinutes: 330, durationMinutes: 45, status: "proposed", option: "Option 2 of 3"},
-  {id: "mobility-c", day: "2026-07-21", title: "Regional mobility sync", time: "4:00 PM", startMinutes: 480, durationMinutes: 45, status: "proposed", option: "Option 3 of 3"},
-  {id: "school-safety", day: "2026-07-22", title: "School safety briefing", time: "9:00 AM", startMinutes: 60, durationMinutes: 75, status: "scheduled"},
-  {id: "budget-review", day: "2026-07-22", title: "Budget review", time: "11:30 AM", startMinutes: 210, durationMinutes: 60, status: "scheduled"},
-  {id: "small-business", day: "2026-07-22", title: "Small business roundtable", time: "2:00 PM", startMinutes: 360, durationMinutes: 75, status: "scheduled"},
-  {id: "housing-coalition", day: "2026-07-23", title: "Housing coalition", time: "9:30 AM", startMinutes: 90, durationMinutes: 45, status: "proposed", option: "Option 1 of 2"},
-  {id: "housing-coalition-b", day: "2026-07-23", title: "Housing coalition", time: "2:30 PM", startMinutes: 390, durationMinutes: 45, status: "proposed", option: "Option 2 of 2"},
-  {id: "education-leads", day: "2026-07-23", title: "Education leads", time: "11:00 AM", startMinutes: 180, durationMinutes: 60, status: "scheduled"},
-  {id: "weekly-debrief", day: "2026-07-24", title: "Weekly debrief", time: "10:00 AM", startMinutes: 120, durationMinutes: 60, status: "scheduled"},
-  {id: "press-prep", day: "2026-07-24", title: "Press preparation", time: "1:00 PM", startMinutes: 300, durationMinutes: 45, status: "scheduled"},
-  {id: "transportation", day: "2026-07-27", title: "Transportation cabinet", time: "9:00 AM", startMinutes: 60, durationMinutes: 60, status: "scheduled"},
-  {id: "community-health", day: "2026-07-27", title: "Community health partners", time: "2:00 PM", startMinutes: 360, durationMinutes: 45, status: "proposed", option: "Option 1 of 2"},
-  {id: "community-health-b", day: "2026-07-28", title: "Community health partners", time: "10:30 AM", startMinutes: 150, durationMinutes: 45, status: "proposed", option: "Option 2 of 2"},
-  {id: "chiefs-sync", day: "2026-07-28", title: "Chiefs of staff sync", time: "3:00 PM", startMinutes: 420, durationMinutes: 60, status: "scheduled"},
-];
 
 const foundationOpenTasks = [
   {id: "school-safety-points", title: "Approve school safety talking points", due: "Due 8:45 AM", tone: "urgent"},
@@ -617,6 +590,50 @@ function initials(name: string) {
     .toUpperCase();
 }
 
+function calendarDateKey(value: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function addCalendarDays(dateKey: string, amount: number) {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + amount);
+  return date.toISOString().slice(0, 10);
+}
+
+function calendarDayLabel(dateKey: string) {
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  const weekday = new Intl.DateTimeFormat("en", {weekday: "long", timeZone: "UTC"}).format(date);
+  const month = new Intl.DateTimeFormat("en", {month: "short", timeZone: "UTC"}).format(date);
+  const dateNumber = new Intl.DateTimeFormat("en", {day: "numeric", timeZone: "UTC"}).format(date);
+  return {weekday, month, date: dateNumber};
+}
+
+function calendarTime(value: string, timeZone: string) {
+  return new Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+  }).format(new Date(value));
+}
+
+function calendarMinutes(value: string, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone,
+  }).formatToParts(new Date(value));
+  const part = (type: string) => Number(parts.find((item) => item.type === type)?.value ?? 0);
+  return part("hour") * 60 + part("minute");
+}
+
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en", {
     month: "short",
@@ -822,6 +839,7 @@ export default function Home() {
   const [isBriefingSaving, setIsBriefingSaving] = useState(false);
   const [workspaceTheme, setWorkspaceTheme] = useState<WorkspaceTheme>("dark");
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
   const requestDetailCache = useRef(new Map<string, SchedulingRequest>());
   const briefingDetailCache = useRef(new Map<string, {detail: BriefingDetail; full: boolean}>());
   const requestDetailLoads = useRef(new Map<string, Promise<SchedulingRequest>>());
@@ -889,6 +907,10 @@ export default function Home() {
     ]);
     setFoundation(bootstrapBody);
     setRequests(requestsBody.requests);
+  }
+
+  function refreshFoundationCalendar() {
+    setCalendarRefreshKey((current) => current + 1);
   }
 
   async function fetchRequestDetail(id: string, signal?: AbortSignal) {
@@ -1128,6 +1150,11 @@ export default function Home() {
     await selectBriefing(id);
   }
 
+  async function openRequest(id: string) {
+    await openMeetingsView("requests");
+    await selectRequest(id);
+  }
+
   function beginNewRequest() {
     if (!foundation) return;
     setSelectedRequest(null);
@@ -1262,6 +1289,7 @@ export default function Home() {
       setRequestExtraction(null);
       setExtractionText("");
       await loadRequests();
+      refreshFoundationCalendar();
       setRelationships(null);
       setAuditEvents(null);
     } catch (requestError) {
@@ -1308,6 +1336,7 @@ export default function Home() {
       requestDetailCache.current.set(body.id, body);
       setSelectedRequest(body);
       await loadRequests();
+      refreshFoundationCalendar();
       setAuditEvents(null);
       return true;
     } catch (requestError) {
@@ -1418,6 +1447,7 @@ export default function Home() {
       }
 
       await loadRequests();
+      refreshFoundationCalendar();
       requestDetailCache.current.delete(selectedRequest.id);
       await selectRequest(selectedRequest.id);
       await openMeetingsView("briefings");
@@ -1709,8 +1739,10 @@ export default function Home() {
           {activeView === "foundation" ? <FoundationDashboard
             userName={session.display_name}
             principalName={foundation.principal?.display_name ?? "the principal"}
-            onOpenScheduled={() => void openMeetingsView("briefings")}
-            onOpenProposed={() => void openMeetingsView("requests")}
+            timezone={foundation.workspace.timezone}
+            refreshKey={calendarRefreshKey}
+            onOpenScheduled={(briefingId) => void openBriefing(briefingId)}
+            onOpenProposed={(requestId) => void openRequest(requestId)}
           /> : null}
 
           {activeView === "members" ? <section id="members" className="workspace-section overview-section">
@@ -1734,31 +1766,72 @@ export default function Home() {
   );
 }
 
-function FoundationDashboard({userName, principalName, onOpenScheduled, onOpenProposed}: {
+function FoundationDashboard({userName, principalName, timezone, refreshKey, onOpenScheduled, onOpenProposed}: {
   userName: string;
   principalName: string;
-  onOpenScheduled: () => void;
-  onOpenProposed: () => void;
+  timezone: string;
+  refreshKey: number;
+  onOpenScheduled: (id: string) => void;
+  onOpenProposed: (id: string) => void;
 }) {
-  const [calendarStart, setCalendarStart] = useState(2);
+  const [calendarStart, setCalendarStart] = useState(() => calendarDateKey(new Date(), timezone));
   const [calendarDirection, setCalendarDirection] = useState<"previous" | "next">("next");
+  const [calendar, setCalendar] = useState<FoundationCalendar | null>(null);
+  const [calendarError, setCalendarError] = useState("");
+  const [isCalendarLoading, setIsCalendarLoading] = useState(true);
   const [completedTasks, setCompletedTasks] = useState<Record<string, boolean>>({});
-  const visibleDays = foundationCalendarDays.slice(calendarStart, calendarStart + 3);
+  const visibleDays = [calendarStart, addCalendarDays(calendarStart, 1), addCalendarDays(calendarStart, 2)];
+  const calendarTimezone = calendar?.timezone ?? timezone;
+  const calendarEntries = calendar?.entries ?? [];
   const firstName = userName.split(" ")[0] || userName;
   const hour = Number(new Intl.DateTimeFormat("en", {
     hour: "2-digit",
     hourCycle: "h23",
-    timeZone: OFFICE_TIME_ZONE,
+    timeZone: calendarTimezone,
   }).format(new Date()));
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const openTaskCount = foundationOpenTasks.filter((task) => !completedTasks[task.id]).length;
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const endDate = addCalendarDays(calendarStart, 2);
+
+    void fetch(`${API_URL}/api/calendar?start_date=${calendarStart}&end_date=${endDate}`, {signal: controller.signal})
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Unable to load the principal calendar.");
+        return body;
+      })
+      .then((body) => {
+        if (!controller.signal.aborted) {
+          setCalendar(body as FoundationCalendar);
+          setCalendarError("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setCalendarError(error instanceof Error ? error.message : "Unable to load the principal calendar.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsCalendarLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [calendarStart, refreshKey]);
+
   function shiftCalendar(direction: "previous" | "next") {
     const delta = direction === "next" ? 1 : -1;
-    const nextStart = Math.max(0, Math.min(foundationCalendarDays.length - 3, calendarStart + delta));
-    if (nextStart === calendarStart) return;
     setCalendarDirection(direction);
-    setCalendarStart(nextStart);
+    setIsCalendarLoading(true);
+    setCalendarError("");
+    setCalendarStart((current) => addCalendarDays(current, delta));
+  }
+
+  function openCalendarEntry(entry: FoundationCalendarEntry) {
+    if (entry.kind === "scheduled" && entry.briefing_id) {
+      onOpenScheduled(entry.briefing_id);
+      return;
+    }
+    onOpenProposed(entry.scheduling_request_id);
   }
 
   return (
@@ -1771,13 +1844,13 @@ function FoundationDashboard({userName, principalName, onOpenScheduled, onOpenPr
         </div>
         <div className="foundation-calendar-actions" aria-label="Calendar navigation">
           <div>
-            <strong>{visibleDays[0]?.month} {visibleDays[0]?.date} to {visibleDays[2]?.month} {visibleDays[2]?.date}</strong>
+            <strong>{calendarDayLabel(visibleDays[0]).month} {calendarDayLabel(visibleDays[0]).date} to {calendarDayLabel(visibleDays[2]).month} {calendarDayLabel(visibleDays[2]).date}</strong>
             <span>Three-day desk view</span>
           </div>
-          <button type="button" onClick={() => shiftCalendar("previous")} disabled={calendarStart === 0} aria-label="Show previous three days">
+          <button type="button" onClick={() => shiftCalendar("previous")} aria-label="Show previous three days">
             <ChevronLeft aria-hidden="true" />
           </button>
-          <button type="button" onClick={() => shiftCalendar("next")} disabled={calendarStart === foundationCalendarDays.length - 3} aria-label="Show next three days">
+          <button type="button" onClick={() => shiftCalendar("next")} aria-label="Show next three days">
             <ChevronRight aria-hidden="true" />
           </button>
         </div>
@@ -1796,14 +1869,16 @@ function FoundationDashboard({userName, principalName, onOpenScheduled, onOpenPr
             </div>
           </div>
 
-          <div className="foundation-calendar-scroll">
+          <div className="foundation-calendar-scroll" aria-busy={isCalendarLoading}>
+            {calendarError ? <p className="foundation-calendar-message" role="alert">{calendarError}</p> : null}
+            {isCalendarLoading && !calendar ? <p className="foundation-calendar-message" aria-live="polite">Loading calendar…</p> : null}
             <div className={`foundation-calendar-frame foundation-calendar-slide-${calendarDirection}`} key={calendarStart}>
               <div className="foundation-time-spacer" />
               {visibleDays.map((day) => (
-                <div className={`foundation-day-heading ${day.isToday ? "is-today" : ""}`} key={`heading-${day.key}`}>
-                  <span>{day.weekday}</span>
-                  <strong>{day.month} {day.date}</strong>
-                  {day.isToday ? <small>Today</small> : null}
+                <div className={`foundation-day-heading ${day === calendarDateKey(new Date(), calendarTimezone) ? "is-today" : ""}`} key={`heading-${day}`}>
+                  <span>{calendarDayLabel(day).weekday}</span>
+                  <strong>{calendarDayLabel(day).month} {calendarDayLabel(day).date}</strong>
+                  {day === calendarDateKey(new Date(), calendarTimezone) ? <small>Today</small> : null}
                 </div>
               ))}
 
@@ -1811,19 +1886,29 @@ function FoundationDashboard({userName, principalName, onOpenScheduled, onOpenPr
                 {["8 AM", "9 AM", "10 AM", "11 AM", "12 PM", "1 PM", "2 PM", "3 PM", "4 PM", "5 PM", "6 PM"].map((label) => <span key={label}>{label}</span>)}
               </div>
               {visibleDays.map((day) => (
-                <div className="foundation-day-lane" key={day.key} aria-label={`${day.weekday}, ${day.month} ${day.date}`}>
-                  {foundationCalendarEvents.filter((event) => event.day === day.key).map((event) => (
+                <div className="foundation-day-lane" key={day} aria-label={`${calendarDayLabel(day).weekday}, ${calendarDayLabel(day).month} ${calendarDayLabel(day).date}`}>
+                  {calendarEntries.filter((entry) => entry.starts_at && calendarDateKey(new Date(entry.starts_at), calendarTimezone) === day).map((entry) => {
+                    const startMinutes = calendarMinutes(entry.starts_at!, calendarTimezone);
+                    const durationMinutes = entry.ends_at ? Math.max(15, Math.round((new Date(entry.ends_at).getTime() - new Date(entry.starts_at!).getTime()) / 60_000)) : 30;
+                    const time = calendarTime(entry.starts_at!, calendarTimezone);
+                    return (
                     <button
-                      className={`foundation-calendar-event is-${event.status}`}
-                      style={{top: `${event.startMinutes / 60 * 52}px`, height: `${Math.max(42, event.durationMinutes / 60 * 52)}px`}}
+                      className={`foundation-calendar-event is-${entry.kind}`}
+                      style={{top: `${Math.max(0, (startMinutes - 480) / 60 * 52)}px`, height: `${Math.max(42, durationMinutes / 60 * 52)}px`}}
                       type="button"
-                      key={event.id}
-                      onClick={event.status === "scheduled" ? onOpenScheduled : onOpenProposed}
-                      aria-label={`${event.title}, ${event.time}, ${event.status}${event.option ? `, ${event.option}` : ""}`}
+                      key={entry.id}
+                      onClick={() => openCalendarEntry(entry)}
+                      aria-label={`${entry.title}, ${time}, ${entry.kind}${entry.option_label ? `, ${entry.option_label}` : ""}`}
                     >
-                      <span>{event.option ?? "Scheduled"}</span>
-                      <strong>{event.title}</strong>
-                      <small>{event.time}</small>
+                      <span>{entry.option_label ?? "Scheduled"}</span>
+                      <strong>{entry.title}</strong>
+                      <small>{time}</small>
+                    </button>
+                    );
+                  })}
+                  {calendarEntries.filter((entry) => entry.kind === "proposed" && !entry.starts_at && entry.candidate_date === day).map((entry) => (
+                    <button className="foundation-calendar-tbd" type="button" key={entry.id} onClick={() => openCalendarEntry(entry)}>
+                      <span>{entry.option_label}</span><strong>{entry.title}</strong><small>Time TBD</small>
                     </button>
                   ))}
                 </div>

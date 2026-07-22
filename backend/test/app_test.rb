@@ -135,6 +135,54 @@ class HolocronAppTest < Minitest::Test
     assert_equal 2, parsed_response.fetch("audit_events").length
   end
 
+  def test_calendar_returns_scheduled_meetings_and_active_candidate_windows
+    briefing = create_briefing(isolated_request_overrides("calendar scheduled"))
+    proposal = create_scheduling_request(isolated_request_overrides("calendar proposal").merge(
+      purpose: "Candidate windows for calendar",
+      candidate_windows: [
+        {
+          candidate_date: "2026-08-11",
+          starts_at: "2026-08-11T10:00:00-06:00",
+          ends_at: "2026-08-11T10:30:00-06:00",
+          notes: "First choice"
+        },
+        {
+          candidate_date: "2026-08-12",
+          starts_at: nil,
+          ends_at: nil,
+          notes: "Time to be confirmed"
+        }
+      ]
+    ))
+
+    get "/api/calendar?start_date=2026-08-11&end_date=2026-08-12"
+
+    assert last_response.ok?
+    body = parsed_response
+    assert_equal "America/Denver", body.fetch("timezone")
+    assert_equal "2026-08-11", body.dig("range", "start_date")
+    scheduled = body.fetch("entries").find { |entry| entry["meeting_id"] == briefing.dig("meeting", "id") }
+    assert_equal "scheduled", scheduled.fetch("kind")
+    assert_equal briefing.fetch("id"), scheduled.fetch("briefing_id")
+    proposed = body.fetch("entries").select { |entry| entry["scheduling_request_id"] == proposal.fetch("id") }
+    assert_equal 2, proposed.length
+    assert_equal "Option 1 of 2", proposed.first.fetch("option_label")
+    assert_nil proposed.last.fetch("starts_at")
+    assert_equal "submitted", proposed.first.fetch("request_status")
+  end
+
+  def test_calendar_validates_its_date_range
+    get "/api/calendar?start_date=2026-08-12&end_date=2026-08-11"
+
+    assert_equal 422, last_response.status
+    assert_equal "End date must be on or after start date.", parsed_response.fetch("error")
+
+    get "/api/calendar?start_date=2026-08-01&end_date=2026-09-01"
+
+    assert_equal 422, last_response.status
+    assert_match(/at most 31 days/, parsed_response.fetch("error"))
+  end
+
   def test_request_extraction_creates_only_an_audited_draft
     request_count = Holocron::Database.db[:scheduling_requests].count
     people_count = Holocron::Database.db[:people].count
