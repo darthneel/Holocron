@@ -73,9 +73,9 @@ The Rack API runs on Puma. `PUMA_MIN_THREADS`, `PUMA_MAX_THREADS`, and
 `WEB_CONCURRENCY` can be adjusted for the Render service; the defaults are
 `1`, `5`, and `0` respectively.
 
-Request extraction and briefing generation use deterministic fake providers by
-default. To use a real provider, export the configuration for each task before
-starting the API:
+Request extraction, briefing generation, and Ask AI generation use deterministic
+fake providers by default. To use a real provider, export the configuration for
+each task before starting the API:
 
 ```bash
 # Recommended: Vercel AI Gateway
@@ -83,6 +83,8 @@ export AI_REQUEST_EXTRACTION_PROVIDER=vercel
 export AI_REQUEST_EXTRACTION_MODEL=openai/gpt-5.6-luna
 export AI_BRIEFING_GENERATION_PROVIDER=vercel
 export AI_BRIEFING_GENERATION_MODEL=openai/gpt-5.6-terra
+export AI_ASK_PROVIDER=vercel
+export AI_ASK_MODEL=openai/gpt-5.6-luna
 export AI_EMBEDDING_PROVIDER=vercel
 export AI_EMBEDDING_MODEL=openai/text-embedding-3-small
 export AI_GATEWAY_API_KEY=...
@@ -92,6 +94,8 @@ export AI_REQUEST_EXTRACTION_PROVIDER=openai
 export AI_REQUEST_EXTRACTION_MODEL=gpt-5.6-luna
 export AI_BRIEFING_GENERATION_PROVIDER=openai
 export AI_BRIEFING_GENERATION_MODEL=gpt-5.6-terra
+export AI_ASK_PROVIDER=openai
+export AI_ASK_MODEL=gpt-5.6-luna
 export AI_EMBEDDING_PROVIDER=openai
 export AI_EMBEDDING_MODEL=text-embedding-3-small
 export OPENAI_API_KEY=...
@@ -101,6 +105,8 @@ export AI_REQUEST_EXTRACTION_PROVIDER=openrouter
 export AI_REQUEST_EXTRACTION_MODEL=openai/gpt-5.6-luna
 export AI_BRIEFING_GENERATION_PROVIDER=openrouter
 export AI_BRIEFING_GENERATION_MODEL=openai/gpt-5.6-terra
+export AI_ASK_PROVIDER=openrouter
+export AI_ASK_MODEL=openai/gpt-5.6-luna
 export OPENROUTER_API_KEY=...
 ```
 

@@ -126,16 +126,32 @@ ruby -Ibackend/eval backend/eval/ask_ai_fixture_contract_test.rb
 
 ### Phase 2: Ask AI model task
 
+**Status: Implemented**
+
 Extend `Holocron::AI::ModelRouter` with `ask_ai(prompt:, schema:)` and task-specific
 provider configuration. Add a strict output schema containing only `answer`,
 `claims`, `source_refs`, and `limitations`. Extend the fake provider so all behavior
 is testable without a network call.
+
+The implementation lives in `backend/lib/holocron/ask_ai_generation.rb`. It owns
+the prompt, bounded model-source shape, strict output schema, claim-level citation
+validation, and normalized provider outcome. `AI_ASK_PROVIDER` and `AI_ASK_MODEL`
+select the provider independently from extraction and briefing generation. The
+deterministic fake provider covers success, no evidence, refusal, malformed output,
+tool-call output, arbitrary UI fields, and transient failures. A deterministic
+failing-provider test covers terminal provider errors.
 
 Gate:
 
 - Fake-provider schema tests pass.
 - Existing extraction and briefing-generation behavior is unchanged.
 - The model cannot return tool calls or arbitrary UI structures.
+
+Verified with:
+
+```sh
+backend/bin/test
+```
 
 ### Phase 3: Grounded retrieval service
 

@@ -45,6 +45,10 @@ module Holocron
         request(prompt: prompt, schema: schema, schema_name: "semantic_burst_labeling", reasoning_effort: "low")
       end
 
+      def ask_ai(prompt:, schema:)
+        request(prompt: prompt, schema: schema, schema_name: "ask_ai_answer", reasoning_effort: "low")
+      end
+
       private
 
       def request(prompt:, schema:, schema_name:, reasoning_effort:)
@@ -135,6 +139,7 @@ module Holocron
 
       def task_environment_prefix
         case @task
+        when :ask_ai then "AI_ASK"
         when :briefing_generation then "AI_BRIEFING_GENERATION"
         when :semantic_burst_labeling then "AI_SEMANTIC_BURST_LABELING"
         else "AI_REQUEST_EXTRACTION"
@@ -155,7 +160,12 @@ module Holocron
       end
 
       def default_model(provider_name)
-        if @task == :briefing_generation
+        if @task == :ask_ai
+          return "fake-ask-ai-v1" if provider_name == "fake"
+          return "gpt-5.6-luna" if provider_name == "openai"
+
+          "openai/gpt-5.6-luna"
+        elsif @task == :briefing_generation
           return "fake-briefing-generator-v1" if provider_name == "fake"
           return "gpt-5.6-terra" if provider_name == "openai"
 

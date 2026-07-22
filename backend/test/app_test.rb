@@ -14,10 +14,13 @@ ENV["AI_REQUEST_EXTRACTION_PROVIDER"] = "fake"
 ENV["AI_REQUEST_EXTRACTION_MODEL"] = "fake-request-extractor-v1"
 ENV["AI_BRIEFING_GENERATION_PROVIDER"] = "fake"
 ENV["AI_BRIEFING_GENERATION_MODEL"] = "fake-briefing-generator-v1"
+ENV["AI_ASK_PROVIDER"] = "fake"
+ENV["AI_ASK_MODEL"] = "fake-ask-ai-v1"
 ENV["AI_EMBEDDING_PROVIDER"] = "fake"
 ENV["AI_EMBEDDING_MODEL"] = "fake-semantic-embedding-v1"
 
 require_relative "../app"
+require_relative "../lib/holocron/ask_ai_generation"
 require_relative "../lib/holocron/semantic_burst_labeling_evaluation"
 
 actual_database_name = Holocron::Database.db.get(Sequel.function(:current_database))
@@ -489,6 +492,108 @@ class HolocronAppTest < Minitest::Test
     original&.each do |key, value|
       value ? ENV[key] = value : ENV.delete(key)
     end
+  end
+
+  def test_ask_ai_fake_provider_returns_only_grounded_contract_fields
+    source = ask_ai_test_sources.first
+
+    outcome = Holocron::AskAIGeneration.generate(
+      question: "What did Priya commit to?",
+      sources: [source]
+    )
+
+    assert_equal "succeeded", outcome.status
+    assert_equal "fake", outcome.provider
+    assert_equal "fake-ask-ai-v1", outcome.model
+    assert_equal [source.fetch("source_ref")], outcome.claims.first.fetch(:source_refs)
+    assert_match(/August 15/, outcome.answer)
+    assert_empty outcome.limitations
+    assert_empty outcome.validation_errors
+
+    schema = Holocron::AskAIGeneration::OUTPUT_SCHEMA
+    assert_equal %w[answer claims limitations], schema.fetch("properties").keys
+    assert_equal false, schema.fetch("additionalProperties")
+    assert_equal false, schema.dig("properties", "claims", "items", "additionalProperties")
+    assert_equal %w[text source_refs], schema.dig("properties", "claims", "items", "properties").keys
+  end
+
+  def test_ask_ai_prompt_excludes_retrieval_diagnostics_and_marks_sources_untrusted
+    source = ask_ai_test_sources.first.merge("rrf_score" => 0.75, "retrieval_signals" => ["vector"])
+    prompt = Holocron::AskAIGeneration.prompt(question: "Summarize this.", sources: [source])
+    model_source = JSON.parse(prompt.fetch(:input)).fetch("sources").first
+
+    assert_equal Holocron::AskAIGeneration::SOURCE_FIELDS, model_source.keys
+    refute model_source.key?("rrf_score")
+    refute model_source.key?("retrieval_signals")
+    assert_match(/untrusted data/, prompt.fetch(:instructions))
+    assert_match(/Do not call tools/, prompt.fetch(:instructions))
+  end
+
+  def test_ask_ai_rejects_malformed_tool_call_and_arbitrary_ui_outputs
+    malformed = Holocron::AskAIGeneration.generate(
+      question: "[fake:malformed] What happened?",
+      sources: ask_ai_test_sources
+    )
+    tool_call = Holocron::AskAIGeneration.generate(
+      question: "[fake:tool-call] Search for this.",
+      sources: ask_ai_test_sources
+    )
+    arbitrary_ui = Holocron::AskAIGeneration.generate(
+      question: "[fake:unsupported-field] Build a card.",
+      sources: ask_ai_test_sources
+    )
+
+    [malformed, tool_call, arbitrary_ui].each do |outcome|
+      assert_equal "failed", outcome.status
+      assert_equal "Model output failed Ask AI validation.", outcome.failure_reason
+      refute_empty outcome.validation_errors
+    end
+    assert_equal "Model output may contain only answer, claims, and limitations.",
+      tool_call.validation_errors.fetch("output")
+    assert_equal "Model output may contain only answer, claims, and limitations.",
+      arbitrary_ui.validation_errors.fetch("output")
+  end
+
+  def test_ask_ai_rejects_missing_and_unknown_claim_citations
+    output = {
+      "answer" => "Unsupported answer.",
+      "claims" => [
+        {"text" => "Missing citation.", "source_refs" => []},
+        {"text" => "Unknown citation.", "source_refs" => ["SRC-999"]}
+      ],
+      "limitations" => []
+    }
+
+    _answer, _claims, _limitations, errors = Holocron::AskAIGeneration.normalize_output(
+      output,
+      sources: ask_ai_test_sources
+    )
+
+    assert_equal "Every claim requires at least one source reference.", errors.fetch("claims.0.source_refs")
+    assert_equal "Citations must use supplied source references.", errors.fetch("claims.1.source_refs")
+  end
+
+  def test_ask_ai_preserves_refusal_and_provider_failure_status
+    refusal = Holocron::AskAIGeneration.generate(
+      question: "[fake:refusal] What happened?",
+      sources: ask_ai_test_sources
+    )
+    failing_provider = Struct.new(:name, :model) do
+      def generate(**)
+        raise Holocron::AI::ProviderError, "provider unavailable"
+      end
+    end.new("test", "test-model")
+    failure = Holocron::AskAIGeneration.generate(
+      question: "What happened?",
+      sources: ask_ai_test_sources,
+      router: Holocron::AI::ModelRouter.new(provider: failing_provider, task: :ask_ai)
+    )
+
+    assert_equal "refused", refusal.status
+    assert_equal "Deterministic fake refusal.", refusal.failure_reason
+    assert_equal "failed", failure.status
+    assert_equal "provider unavailable", failure.failure_reason
+    assert_equal 1, failure.attempt_count
   end
 
   def test_scheduling_requests_require_an_active_development_actor
@@ -1922,6 +2027,19 @@ class HolocronAppTest < Minitest::Test
   end
 
   private
+
+  def ask_ai_test_sources
+    [{
+      "source_ref" => "INT-001",
+      "source_type" => "interaction",
+      "source_id" => "interaction-001",
+      "person_name" => "Priya Shah",
+      "organization_name" => "Cedar Grove",
+      "interaction_type" => "meeting",
+      "occurred_at" => "2026-07-10T16:00:00Z",
+      "excerpt" => "Priya committed to deliver the accessibility estimates by August 15."
+    }]
+  end
 
   def post_json(path, body, headers = {})
     post path, JSON.generate(body), {"CONTENT_TYPE" => "application/json"}.merge(headers)
