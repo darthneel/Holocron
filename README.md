@@ -313,6 +313,7 @@ The default seeded email is `neelp22@gmail.com`.
 GET  /health
 POST /api/fake-session
 GET  /api/foundation
+GET  /api/calendar?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
 POST /api/request-extractions
 GET  /api/request-extractions/:id
 GET  /api/scheduling-requests
