@@ -6311,45 +6311,33 @@ a:focus-visible {
 .foundation-wave-gradient {
   position: relative;
   left: 50%;
-  flex: 0 0 124px;
-  height: 124px;
+  flex: 0 0 132px;
+  height: 132px;
   width: 100vw;
-  margin: auto 0 -88px -50vw;
+  margin: auto 0 -96px -50vw;
   overflow: hidden;
   pointer-events: none;
 }
 
-.foundation-wave-gradient > span {
-  position: absolute;
+.foundation-wave-gradient svg {
   display: block;
-  border-radius: 50%;
+  width: 100%;
+  height: 100%;
 }
 
 .foundation-wave-one {
-  bottom: -120px;
-  left: -18%;
-  width: max(720px, 68vw);
-  height: 182px;
-  background: linear-gradient(105deg, var(--accent-strong), var(--accent));
-  opacity: 0.40;
+  fill: var(--accent-strong);
+  opacity: 0.51;
 }
 
 .foundation-wave-two {
-  bottom: -128px;
-  left: 22%;
-  width: max(760px, 70vw);
-  height: 192px;
-  background: linear-gradient(100deg, var(--accent), var(--peach));
-  opacity: 0.34;
+  fill: var(--peach);
+  opacity: 0.48;
 }
 
 .foundation-wave-three {
-  bottom: -122px;
-  left: 55%;
-  width: max(720px, 64vw);
-  height: 184px;
-  background: linear-gradient(105deg, var(--cool), var(--cool-strong));
-  opacity: 0.30;
+  fill: var(--cool-strong);
+  opacity: 0.46;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -6426,8 +6414,8 @@ a:focus-visible {
   }
 
   .foundation-wave-gradient {
-    flex-basis: 94px;
-    height: 94px;
-    margin-bottom: -64px;
+    flex-basis: 96px;
+    height: 96px;
+    margin-bottom: -68px;
   }
 }

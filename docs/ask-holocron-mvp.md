@@ -155,6 +155,8 @@ backend/bin/test
 
 ### Phase 3: Grounded retrieval service
 
+**Status: Implemented**
+
 Add `backend/lib/holocron/ask_ai.rb`. Validate a 3-1,000 character question,
 resolve exact entity names, retrieve at most six fused interaction matches, build
 a bounded source manifest, call the model, and validate every generated source
@@ -164,11 +166,24 @@ model when retrieval finds no qualifying interaction.
 Do not modify `SemanticIndex`, add semantic source types, or let the model create
 SQL.
 
+The service resolves people and organizations only inside the supplied workspace,
+requests at most six results from the existing fused interaction index, applies a
+second workspace and entity boundary, and sends a bounded interaction-only source
+manifest to the Phase 2 generator. Shared first names return deterministic
+disambiguation. Unknown, off-topic, and cross-workspace-only evidence returns a
+deterministic limitation without invoking the model. Only sources cited by the
+validated generated claims are returned.
+
 Gate:
 
 - Every factual claim has a valid retrieved source.
 - Invalid or missing citations fail closed.
 - Retrieval never crosses the active workspace boundary.
+
+Verified by unit coverage for validation, entity scoping, disambiguation,
+no-evidence short-circuiting, citation rejection, source limits, and explicit
+cross-workspace filtering, plus an end-to-end test through the existing fused
+semantic/lexical index.
 
 ### Phase 4: Read-only API
 

@@ -1859,9 +1859,20 @@ function FoundationDashboard({userName, principalName, onOpenScheduled, onOpenPr
       </div>
 
       <div className="foundation-wave-gradient" aria-hidden="true">
-        <span className="foundation-wave-one" />
-        <span className="foundation-wave-two" />
-        <span className="foundation-wave-three" />
+        <svg viewBox="0 0 1440 150" preserveAspectRatio="none" focusable="false">
+          <path
+            className="foundation-wave-one"
+            d="M-60 70 C135 42 305 52 482 91 C650 128 770 117 930 91 C1088 66 1237 72 1500 122 L1500 150 L-60 150 Z"
+          />
+          <path
+            className="foundation-wave-two"
+            d="M-60 132 C155 120 333 82 522 68 C710 54 846 69 1015 103 C1180 136 1320 130 1500 84 L1500 150 L-60 150 Z"
+          />
+          <path
+            className="foundation-wave-three"
+            d="M855 150 C925 92 1050 66 1195 66 C1324 66 1425 88 1500 108 L1500 150 Z"
+          />
+        </svg>
       </div>
     </section>
   );
