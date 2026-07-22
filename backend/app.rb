@@ -3,6 +3,7 @@
 require "json"
 require "roda"
 require "uri"
+require_relative "lib/holocron/ask_ai"
 require_relative "lib/holocron/http_middleware"
 require_relative "lib/holocron/database"
 require_relative "lib/holocron/briefings"
@@ -52,6 +53,44 @@ module Holocron
         rescue JSON::ParserError
           response.status = 400
           {error: "Request body must be valid JSON."}
+        end
+
+        r.post "ask" do
+          begin
+            workspace = current_workspace
+            unless workspace
+              response.status = 503
+              next({error: "Foundation data has not been seeded."})
+            end
+
+            body = parse_json_body(r)
+            unless body.is_a?(Hash)
+              response.status = 400
+              next({error: "Request body must be a JSON object."})
+            end
+
+            actor = actor_or_error(r, workspace)
+            next actor if actor.key?(:error)
+
+            result = AskAI.answer(question: body["question"], workspace: workspace)
+            unless result.status == "succeeded"
+              response.status = ask_failure_status(result)
+              next({
+                error: result.failure_reason || "Ask Holocron could not complete the request.",
+                provider: result.provider,
+                model: result.model,
+                validation_errors: result.validation_errors
+              }.compact)
+            end
+
+            serialize_ask_result(result)
+          rescue JSON::ParserError
+            response.status = 400
+            {error: "Request body must be valid JSON."}
+          rescue AskAI::ValidationError => error
+            response.status = 422
+            {error: error.message, fields: error.fields}
+          end
         end
 
         r.get "foundation" do
@@ -506,6 +545,23 @@ module Holocron
         current_lock_version: error.current_lock_version,
         current_status: error.current_status
       }
+    end
+
+    def serialize_ask_result(result)
+      {
+        question: result.question,
+        answer: result.answer,
+        claims: result.claims,
+        sources: result.sources,
+        limitations: result.limitations
+      }
+    end
+
+    def ask_failure_status(result)
+      configuration_failure = result.failure_reason.to_s.match?(
+        /not configured|unconfigured|Unsupported ask ai provider/i
+      )
+      configuration_failure ? 503 : 502
     end
 
     def relationship_command(request, workspace, method_name, id: nil, success_status: 201)

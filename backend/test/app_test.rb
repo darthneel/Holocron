@@ -796,6 +796,108 @@ class HolocronAppTest < Minitest::Test
     assert_match(/Orion Beacon/, result.answer)
   end
 
+  def test_ask_endpoint_rejects_invalid_json_and_non_object_bodies
+    post "/api/ask", "{", actor_headers.merge("CONTENT_TYPE" => "application/json")
+
+    assert_equal 400, last_response.status
+    assert_equal "Request body must be valid JSON.", parsed_response.fetch("error")
+
+    post_json "/api/ask", ["not", "an", "object"], actor_headers
+
+    assert_equal 400, last_response.status
+    assert_equal "Request body must be a JSON object.", parsed_response.fetch("error")
+  end
+
+  def test_ask_endpoint_requires_an_active_workspace_actor
+    post_json "/api/ask", {question: "What do we know?"}
+
+    assert_equal 401, last_response.status
+    assert_match(/X-Holocron-Actor-Email/, parsed_response.fetch("error"))
+
+    post_json "/api/ask", {question: "What do we know?"},
+      "HTTP_X_HOLOCRON_ACTOR_EMAIL" => "unknown@example.org"
+
+    assert_equal 403, last_response.status
+    assert_match(/active workspace member/, parsed_response.fetch("error"))
+  end
+
+  def test_ask_endpoint_returns_question_validation_errors
+    post_json "/api/ask", {question: "?"}, actor_headers
+
+    assert_equal 422, last_response.status
+    assert_equal "Validation failed.", parsed_response.fetch("error")
+    assert_equal "Question must be at least 3 characters.", parsed_response.dig("fields", "question")
+  end
+
+  def test_ask_endpoint_is_grounded_and_does_not_change_table_row_counts
+    db = Holocron::Database.db
+    workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
+    actor = db[:workspace_members].where(workspace_id: workspace[:id]).first
+    person = ask_ai_fixture_person(workspace: workspace, name: "Ask API Grounded Person")
+    now = Time.now.utc
+    interaction_id = SecureRandom.uuid
+    db[:interactions].insert(
+      id: interaction_id,
+      workspace_id: workspace.fetch(:id),
+      person_id: person.fetch(:id),
+      authored_by_workspace_member_id: actor.fetch(:id),
+      interaction_type: "meeting",
+      summary: "The team confirmed the Harbor Access review will finish on August 21.",
+      source_type: "manual",
+      occurred_at: now,
+      created_at: now,
+      updated_at: now
+    )
+    Holocron::SemanticIndex.new(workspace: workspace).refresh_interactions!
+    counts_before = db.tables.to_h { |table| [table, db[table].count] }
+
+    post_json "/api/ask", {question: "What do we know about Ask API Grounded Person?"}, actor_headers
+
+    counts_after = db.tables.to_h { |table| [table, db[table].count] }
+    assert_equal 200, last_response.status
+    assert_equal "What do we know about Ask API Grounded Person?", parsed_response.fetch("question")
+    assert_match(/August 21/, parsed_response.fetch("answer"))
+    assert_equal ["interaction:#{interaction_id}"], parsed_response.dig("claims", 0, "source_refs")
+    assert_equal interaction_id, parsed_response.dig("sources", 0, "source_id")
+    assert_equal [], parsed_response.fetch("limitations")
+    assert_equal %w[answer claims limitations question sources], parsed_response.keys.sort
+    assert_equal counts_before, counts_after
+  end
+
+  def test_ask_endpoint_maps_model_configuration_failure_to_service_unavailable
+    db = Holocron::Database.db
+    workspace = db[:workspaces].where(slug: "cedar-grove-mayor").first
+    actor = db[:workspace_members].where(workspace_id: workspace[:id]).first
+    person = ask_ai_fixture_person(workspace: workspace, name: "Ask Configuration Person")
+    now = Time.now.utc
+    db[:interactions].insert(
+      id: SecureRandom.uuid,
+      workspace_id: workspace.fetch(:id),
+      person_id: person.fetch(:id),
+      authored_by_workspace_member_id: actor.fetch(:id),
+      interaction_type: "note",
+      summary: "Configuration test evidence.",
+      source_type: "manual",
+      occurred_at: now,
+      created_at: now,
+      updated_at: now
+    )
+    original_provider = ENV["AI_ASK_PROVIDER"]
+    original_model = ENV["AI_ASK_MODEL"]
+    ENV["AI_ASK_PROVIDER"] = "unsupported"
+    ENV["AI_ASK_MODEL"] = "unsupported-model"
+
+    post_json "/api/ask", {question: "What do we know about Ask Configuration Person?"}, actor_headers
+
+    assert_equal 503, last_response.status
+    assert_match(/Unsupported ask ai provider/, parsed_response.fetch("error"))
+    assert_equal "unsupported", parsed_response.fetch("provider")
+    assert_equal "unsupported-model", parsed_response.fetch("model")
+  ensure
+    original_provider ? ENV["AI_ASK_PROVIDER"] = original_provider : ENV.delete("AI_ASK_PROVIDER")
+    original_model ? ENV["AI_ASK_MODEL"] = original_model : ENV.delete("AI_ASK_MODEL")
+  end
+
   def test_scheduling_requests_require_an_active_development_actor
     post_json "/api/scheduling-requests", scheduling_request_payload
 

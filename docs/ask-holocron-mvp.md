@@ -187,9 +187,16 @@ semantic/lexical index.
 
 ### Phase 4: Read-only API
 
+**Status: Implemented**
+
 Add `POST /api/ask`. The route resolves the current workspace and actor, parses a
 JSON object, delegates to `AskAI`, and serializes the validated result. It creates
 no records and changes no domain state.
+
+The route requires an active workspace member, rejects invalid JSON and invalid
+questions, preserves the strict Phase 2 response shape, and maps unavailable
+provider configuration separately from provider execution failures. Endpoint
+coverage snapshots every domain-table row count before and after a grounded query.
 
 Gate:
 
@@ -197,11 +204,22 @@ Gate:
   documented contract.
 - Database row counts do not change after a query.
 
+Verified by endpoint coverage for malformed payloads, authentication and member
+boundaries, question validation, grounded success, unavailable provider
+configuration, and read-only database behavior.
+
 ### Phase 5: Ask Holocron interface
+
+**Status: Implemented**
 
 Add an `ask` workspace view and a separate `app/ask-holocron.tsx` component. The
 component owns the question, loading, error, no-evidence, and success states and
 renders cited source cards. Do not add browser persistence or thread history.
+
+The interface submits with Enter while preserving Shift + Enter for multiline
+input, disables repeat submission while loading, and replaces a previous valid
+result when a new valid question starts. Claims link directly to numbered source
+cards, while limitations remain visually separate from grounded evidence.
 
 Gate:
 
@@ -209,6 +227,11 @@ Gate:
 - Generated claims and source material are visually distinct.
 - A second question replaces the first answer.
 - Existing workspace views do not regress.
+
+Verified in dark and light themes at desktop and 390-pixel mobile widths, including
+idle, loading, grounded success, no-evidence, inline validation, and result
+replacement states. The responsive view has no horizontal overflow and emitted no
+browser console errors.
 
 ### Phase 6: End-to-end verification
 

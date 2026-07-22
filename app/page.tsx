@@ -28,6 +28,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { FormEvent, useRef, useState } from "react";
+import { AskHolocron } from "./ask-holocron";
 import { HolocronMark } from "./holocron-mark";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9292";
@@ -75,7 +76,7 @@ type Foundation = {
   members: WorkspaceMember[];
 };
 
-type WorkspaceView = "meetings" | "relationships" | "foundation" | "members" | "audit";
+type WorkspaceView = "ask" | "meetings" | "relationships" | "foundation" | "members" | "audit";
 type MeetingsView = "requests" | "briefings";
 type LoadingView = WorkspaceView | "meeting-briefings";
 type WorkspaceTheme = "dark" | "light";
@@ -1568,10 +1569,11 @@ export default function Home() {
         </div>
         <nav className="workspace-nav" aria-label="Workspace sections">
           <button type="button" aria-label="Foundation" className={activeView === "foundation" ? "is-active" : ""} aria-current={activeView === "foundation" ? "page" : undefined} onClick={() => void openWorkspaceView("foundation")}><small aria-hidden="true">01</small><span>Foundation</span></button>
-          <button type="button" aria-label="Meetings" className={activeView === "meetings" ? "is-active" : ""} aria-current={activeView === "meetings" ? "page" : undefined} onClick={() => void openWorkspaceView("meetings")}><small aria-hidden="true">02</small><span>Meetings</span></button>
-          <button type="button" aria-label="Relationships" className={activeView === "relationships" ? "is-active" : ""} aria-current={activeView === "relationships" ? "page" : undefined} onClick={() => void openWorkspaceView("relationships")}><small aria-hidden="true">03</small><span>Relationships</span></button>
-          <button type="button" aria-label="Members" className={activeView === "members" ? "is-active" : ""} aria-current={activeView === "members" ? "page" : undefined} onClick={() => void openWorkspaceView("members")}><small aria-hidden="true">04</small><span>Members</span></button>
-          <button type="button" aria-label="Audit log" className={activeView === "audit" ? "is-active" : ""} aria-current={activeView === "audit" ? "page" : undefined} onClick={() => void openWorkspaceView("audit")}><small aria-hidden="true">05</small><span>Audit log</span></button>
+          <button type="button" aria-label="Ask Holocron" className={activeView === "ask" ? "is-active" : ""} aria-current={activeView === "ask" ? "page" : undefined} onClick={() => void openWorkspaceView("ask")}><small aria-hidden="true">02</small><span>Ask Holocron</span></button>
+          <button type="button" aria-label="Meetings" className={activeView === "meetings" ? "is-active" : ""} aria-current={activeView === "meetings" ? "page" : undefined} onClick={() => void openWorkspaceView("meetings")}><small aria-hidden="true">03</small><span>Meetings</span></button>
+          <button type="button" aria-label="Relationships" className={activeView === "relationships" ? "is-active" : ""} aria-current={activeView === "relationships" ? "page" : undefined} onClick={() => void openWorkspaceView("relationships")}><small aria-hidden="true">04</small><span>Relationships</span></button>
+          <button type="button" aria-label="Members" className={activeView === "members" ? "is-active" : ""} aria-current={activeView === "members" ? "page" : undefined} onClick={() => void openWorkspaceView("members")}><small aria-hidden="true">05</small><span>Members</span></button>
+          <button type="button" aria-label="Audit log" className={activeView === "audit" ? "is-active" : ""} aria-current={activeView === "audit" ? "page" : undefined} onClick={() => void openWorkspaceView("audit")}><small aria-hidden="true">06</small><span>Audit log</span></button>
         </nav>
       </header>
 
@@ -1583,7 +1585,11 @@ export default function Home() {
               <strong>Loading {activeView}</strong>
             </section>
           ) : null}
-          {activeView !== "meetings" && error ? <p className="form-error workflow-error" role="alert">{error}</p> : null}
+          {activeView !== "meetings" && activeView !== "ask" && error ? <p className="form-error workflow-error" role="alert">{error}</p> : null}
+
+          {activeView === "ask" ? (
+            <AskHolocron apiUrl={API_URL} actorEmail={session.email} canAsk={session.known_member} />
+          ) : null}
 
           {activeView === "meetings" ? <div className="meetings-view">
             <nav className="meetings-tabs" aria-label="Meeting workspace views">
@@ -1860,17 +1866,39 @@ function FoundationDashboard({userName, principalName, onOpenScheduled, onOpenPr
 
       <div className="foundation-wave-gradient" aria-hidden="true">
         <svg viewBox="0 0 1440 150" preserveAspectRatio="none" focusable="false">
+          <defs>
+            <linearGradient id="foundation-wave-coral" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1440" y2="0">
+              <stop offset="0%" stopColor="#ed6558" stopOpacity="0.55" />
+              <stop offset="48%" stopColor="#df6a55" stopOpacity="0.48" />
+              <stop offset="74%" stopColor="#d7775d" stopOpacity="0.18" />
+              <stop offset="90%" stopColor="#d7775d" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="foundation-wave-peach" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1440" y2="0">
+              <stop offset="0%" stopColor="#f17b5c" stopOpacity="0" />
+              <stop offset="18%" stopColor="#f17b5c" stopOpacity="0.30" />
+              <stop offset="52%" stopColor="#f29a70" stopOpacity="0.48" />
+              <stop offset="76%" stopColor="#e5aa83" stopOpacity="0.20" />
+              <stop offset="88%" stopColor="#e5aa83" stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id="foundation-wave-teal" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1440" y2="0">
+              <stop offset="54%" stopColor="#78a9b2" stopOpacity="0" />
+              <stop offset="68%" stopColor="#78a9b2" stopOpacity="0" />
+              <stop offset="78%" stopColor="#82afb7" stopOpacity="0.28" />
+              <stop offset="88%" stopColor="#8ab6bd" stopOpacity="0.46" />
+              <stop offset="100%" stopColor="#92bdc3" stopOpacity="0.54" />
+            </linearGradient>
+          </defs>
           <path
             className="foundation-wave-one"
-            d="M-60 70 C135 42 305 52 482 91 C650 128 770 117 930 91 C1088 66 1237 72 1500 122 L1500 150 L-60 150 Z"
+            d="M-60 58 C135 34 305 48 482 88 C650 126 770 116 930 91 C1088 66 1237 72 1500 122 L1500 150 L-60 150 Z"
           />
           <path
             className="foundation-wave-two"
-            d="M-60 132 C155 120 333 82 522 68 C710 54 846 69 1015 103 C1180 136 1320 130 1500 84 L1500 150 L-60 150 Z"
+            d="M-60 143 C155 130 333 88 522 69 C710 51 846 67 1015 102 C1180 137 1320 129 1500 83 L1500 150 L-60 150 Z"
           />
           <path
             className="foundation-wave-three"
-            d="M855 150 C925 92 1050 66 1195 66 C1324 66 1425 88 1500 108 L1500 150 Z"
+            d="M845 150 C925 91 1050 65 1195 65 C1324 65 1425 78 1500 84 L1500 150 Z"
           />
         </svg>
       </div>
