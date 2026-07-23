@@ -221,7 +221,7 @@ class HolocronAppTest < Minitest::Test
     extraction = parsed_response
     assert_equal "succeeded", extraction.fetch("status")
     assert_equal "fake", extraction.fetch("provider")
-    assert_equal "request-extraction-v2", extraction.fetch("prompt_version")
+    assert_equal "request-extraction-v3", extraction.fetch("prompt_version")
     assert_equal "Priya Shah", extraction.dig("proposal", "requester", "name")
     assert_equal "priya.step6@example.org", extraction.dig("proposal", "requester", "email")
     assert_equal "Regional mobility briefing", extraction.dig("proposal", "purpose")
@@ -329,7 +329,7 @@ class HolocronAppTest < Minitest::Test
       "requested_duration_minutes" => 45,
       "availability_notes" => nil,
       "participants" => [
-        {"name" => "Elena Park", "email" => "mayor@cedargrove.gov", "organization" => nil, "role" => "required"},
+        {"name" => "Jordan Lee", "email" => "jordan.lee@cedargrove.gov", "organization" => nil, "role" => "staff"},
         {"name" => "Sam Rivera", "email" => nil, "organization" => nil, "role" => "staff"}
       ],
       "candidate_windows" => [],
@@ -343,6 +343,42 @@ class HolocronAppTest < Minitest::Test
     assert_equal "Cedar Grove Mayor's Office", normalized.dig("participants", 0, "organization")
     assert_nil normalized.dig("participants", 1, "organization")
     assert_nil normalized.dig("participants", 1, "email")
+  end
+
+  def test_extraction_excludes_the_workspace_principal_but_keeps_other_internal_participants
+    workspace = Holocron::Database.db[:workspaces].where(slug: "cedar-grove-mayor").first
+    output = {
+      "requester" => {"name" => "Camila Ortega", "email" => "camila@example.org", "organization" => "West Mesa Network"},
+      "purpose" => "Small business listening session",
+      "requested_duration_minutes" => 45,
+      "preferred_location" => nil,
+      "availability_notes" => nil,
+      "participants" => [
+        {"name" => "Mayor Park", "email" => nil, "organization" => nil, "role" => "required"},
+        {"name" => "Elena Park", "email" => "mayor@cedargrove.gov", "organization" => "City of Cedar Grove", "role" => "required"},
+        {"name" => "Jordan Lee", "email" => "jordan.lee@cedargrove.gov", "organization" => nil, "role" => "staff"}
+      ],
+      "candidate_windows" => [],
+      "briefing_context" => {"agenda_items" => [], "constraints" => [], "promised_deliverables" => [], "unresolved_questions" => []},
+      "warnings" => []
+    }
+
+    normalized, errors, warnings = Holocron::RequestExtractions.normalize_output(output, workspace: workspace)
+
+    assert_empty errors
+    assert_equal ["Jordan Lee"], normalized.fetch("participants").map { |participant| participant.fetch("name") }
+    assert_equal "Cedar Grove Mayor's Office", normalized.dig("participants", 0, "organization")
+    assert_includes warnings, "Removed the workspace principal from participants; the principal is the meeting host."
+  end
+
+  def test_extraction_prompt_identifies_the_principal_as_the_implicit_host
+    workspace = Holocron::Database.db[:workspaces].where(slug: "cedar-grove-mayor").first
+
+    instructions = Holocron::RequestExtractions.prompt("Please meet with Mayor Park.", workspace).fetch(:instructions)
+
+    assert_includes instructions, "The principal for this calendar is Elena Park (Mayor)."
+    assert_includes instructions, "must never appear in participants"
+    assert_includes instructions, "Mayor Park"
   end
 
   def test_extraction_recovers_natural_language_mountain_time_candidate_windows
