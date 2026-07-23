@@ -60,6 +60,18 @@ npm run dev
 
 Open `http://localhost:3000`. The API runs on `http://localhost:9292`.
 
+To add a realistic rolling two-week demo calendar to the Cedar Grove workspace,
+run:
+
+```bash
+backend/bin/seed-demo-calendar
+```
+
+The command creates or refreshes eight proposed meetings, sixteen candidate
+windows, eight fictional partner organizations, sixteen contacts, and prior
+interaction context. It uses today as the first day; set `DEMO_START_DATE` to an
+ISO 8601 date when a demo needs a stable reference date.
+
 The browser calls the API directly; there is no frontend proxy. Locally, API
 CORS accepts localhost and 127.0.0.1 origins on any port when no allowlist is
 configured. In production, configure an explicit comma-separated allowlist:

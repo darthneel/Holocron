@@ -1780,12 +1780,16 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
   onOpenScheduled: (id: string) => void;
   onOpenProposed: (id: string) => void;
 }) {
-  const [calendarStart, setCalendarStart] = useState(() => calendarDateKey(new Date(), timezone));
+  const initialToday = calendarDateKey(new Date(), timezone);
+  const [today, setToday] = useState(initialToday);
+  const [calendarStart, setCalendarStart] = useState(initialToday);
   const [calendarDirection, setCalendarDirection] = useState<"previous" | "next">("next");
   const [calendar, setCalendar] = useState<FoundationCalendar | null>(null);
   const [calendarError, setCalendarError] = useState("");
   const [isCalendarLoading, setIsCalendarLoading] = useState(true);
   const [completedTasks, setCompletedTasks] = useState<Record<string, boolean>>({});
+  const todayRef = useRef(initialToday);
+  const followsTodayRef = useRef(true);
   const visibleDays = [calendarStart, addCalendarDays(calendarStart, 1), addCalendarDays(calendarStart, 2)];
   const calendarTimezone = calendar?.timezone ?? timezone;
   const calendarEntries = calendar?.entries ?? [];
@@ -1797,6 +1801,37 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
   }).format(new Date()));
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const openTaskCount = foundationOpenTasks.filter((task) => !completedTasks[task.id]).length;
+
+  useEffect(() => {
+    function syncOfficeDate() {
+      const nextToday = calendarDateKey(new Date(), calendarTimezone);
+      const previousToday = todayRef.current;
+      if (nextToday === previousToday) return;
+
+      todayRef.current = nextToday;
+      setToday(nextToday);
+      if (followsTodayRef.current) {
+        setCalendarDirection("next");
+        setIsCalendarLoading(true);
+        setCalendarError("");
+        setCalendarStart(nextToday);
+      }
+    }
+
+    function syncVisibleOfficeDate() {
+      if (document.visibilityState === "visible") syncOfficeDate();
+    }
+
+    syncOfficeDate();
+    const interval = window.setInterval(syncOfficeDate, 30_000);
+    window.addEventListener("focus", syncOfficeDate);
+    document.addEventListener("visibilitychange", syncVisibleOfficeDate);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", syncOfficeDate);
+      document.removeEventListener("visibilitychange", syncVisibleOfficeDate);
+    };
+  }, [calendarTimezone]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1826,6 +1861,7 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
 
   function shiftCalendar(direction: "previous" | "next") {
     const delta = direction === "next" ? 1 : -1;
+    followsTodayRef.current = false;
     setCalendarDirection(direction);
     setIsCalendarLoading(true);
     setCalendarError("");
@@ -1881,10 +1917,10 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
             <div className={`foundation-calendar-frame foundation-calendar-slide-${calendarDirection}`} key={calendarStart}>
               <div className="foundation-time-spacer" />
               {visibleDays.map((day) => (
-                <div className={`foundation-day-heading ${day === calendarDateKey(new Date(), calendarTimezone) ? "is-today" : ""}`} key={`heading-${day}`}>
+                <div className={`foundation-day-heading ${day === today ? "is-today" : ""}`} key={`heading-${day}`}>
                   <span>{calendarDayLabel(day).weekday}</span>
                   <strong>{calendarDayLabel(day).month} {calendarDayLabel(day).date}</strong>
-                  {day === calendarDateKey(new Date(), calendarTimezone) ? <small>Today</small> : null}
+                  {day === today ? <small>Today</small> : null}
                 </div>
               ))}
 

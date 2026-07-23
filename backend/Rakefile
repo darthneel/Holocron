@@ -20,6 +20,12 @@ namespace :db do
     load File.expand_path("db/seeds.rb", __dir__)
   end
 
+  desc "Seed a rolling two-week calendar for product demos"
+  task seed_demo_calendar: :migrate do
+    require_relative "script/seed_demo_calendar"
+    Holocron::DemoCalendarSeed.run
+  end
+
   desc "Create and seed the local database"
   task setup: %i[create seed]
 end

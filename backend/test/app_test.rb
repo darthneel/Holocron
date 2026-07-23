@@ -23,6 +23,7 @@ require_relative "../app"
 require_relative "../lib/holocron/ask_ai"
 require_relative "../lib/holocron/ask_ai_generation"
 require_relative "../lib/holocron/semantic_burst_labeling_evaluation"
+require_relative "../script/seed_demo_calendar"
 
 actual_database_name = Holocron::Database.db.get(Sequel.function(:current_database))
 raise "Refusing to reset non-test database #{actual_database_name}." unless actual_database_name == test_database_name
@@ -181,6 +182,31 @@ class HolocronAppTest < Minitest::Test
 
     assert_equal 422, last_response.status
     assert_match(/at most 31 days/, parsed_response.fetch("error"))
+  end
+
+  def test_demo_calendar_seed_has_a_realistic_mix_without_duplicate_entities
+    definitions = Holocron::DemoCalendarSeed.demo_definitions
+    organizations = definitions.map { |definition| definition.dig(:organization, :name) }
+    contacts = definitions.flat_map { |definition| definition.fetch(:contacts) }
+    emails = contacts.map { |contact| contact.fetch(:email) }
+
+    assert_equal 8, definitions.length
+    assert_equal 8, organizations.uniq.length
+    assert_equal 16, contacts.length
+    assert_equal contacts.length, emails.uniq.length
+    assert definitions.all? { |definition| %w[submitted under_review approved].include?(definition.fetch(:status)) }
+    assert definitions.all? { |definition| definition.fetch(:contacts).length >= 2 }
+  end
+
+  def test_demo_calendar_candidate_windows_fill_only_the_two_week_range
+    definitions = Holocron::DemoCalendarSeed.demo_definitions
+    windows = definitions.flat_map { |definition| definition.fetch(:windows) }
+    multi_option_meetings = definitions.count { |definition| definition.fetch(:windows).length > 1 }
+
+    assert_equal 16, windows.length
+    assert windows.all? { |window| window.fetch(:day_offset).between?(0, 14) }
+    assert_operator multi_option_meetings, :>=, 5
+    assert_operator windows.map { |window| window.fetch(:day_offset) }.uniq.length, :>=, 9
   end
 
   def test_request_extraction_creates_only_an_audited_draft
@@ -2587,14 +2613,15 @@ class HolocronAppTest < Minitest::Test
 
   def isolated_request_overrides(label)
     token = SecureRandom.hex(4)
+    email_label = label.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-+|-+\z/, "")
     organization = "#{label} organization #{token}"
     {
       requester_name: "#{label} requester",
-      requester_email: "#{label}-#{token}@example.org",
+      requester_email: "#{email_label}-#{token}@example.org",
       requester_organization: organization,
       participants: [{
         name: "#{label} participant",
-        email: "#{label}-participant-#{token}@example.org",
+        email: "#{email_label}-participant-#{token}@example.org",
         organization: organization,
         role: "required"
       }]
