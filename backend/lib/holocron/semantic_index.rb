@@ -144,9 +144,38 @@ module Holocron
     end
 
     def refresh_interactions!
-      documents = interaction_documents
-      existing = @db[:semantic_documents]
+      refresh_documents!(interaction_documents)
+    end
+
+    def refresh_interaction!(interaction_id:)
+      interaction = @db[:interactions].where(workspace_id: workspace_id, id: interaction_id).first
+      documents = interaction ? interaction_documents(interaction_ids: [interaction_id]) : []
+      refresh_documents!(documents, source_ids: [interaction_id])
+    end
+
+    def existing_index_statistics
+      records = @db[:semantic_documents]
         .where(workspace_id: workspace_id, source_type: "interaction")
+        .select(:source_id, :unit_type)
+        .all
+      {
+        indexed_records: records.length,
+        indexed_interactions: records.map { |record| record[:source_id] }.uniq.length,
+        overview_records: records.count { |record| record[:unit_type] == "overview" },
+        burst_records: records.count { |record| record[:unit_type] == "burst" },
+        refreshed_records: 0,
+        removed_records: 0,
+        embedding_tokens: 0
+      }
+    end
+
+    private
+
+    def refresh_documents!(documents, source_ids: nil)
+      existing_scope = @db[:semantic_documents]
+        .where(workspace_id: workspace_id, source_type: "interaction")
+      existing_scope = existing_scope.where(source_id: source_ids) if source_ids
+      existing = existing_scope
         .all
         .to_h { |document| [document_key(document), document] }
       provider = @embedding_provider || AI::Embeddings.configured_provider
@@ -212,27 +241,11 @@ module Holocron
       }
     end
 
-    def existing_index_statistics
-      records = @db[:semantic_documents]
-        .where(workspace_id: workspace_id, source_type: "interaction")
-        .select(:source_id, :unit_type)
-        .all
-      {
-        indexed_records: records.length,
-        indexed_interactions: records.map { |record| record[:source_id] }.uniq.length,
-        overview_records: records.count { |record| record[:unit_type] == "overview" },
-        burst_records: records.count { |record| record[:unit_type] == "burst" },
-        refreshed_records: 0,
-        removed_records: 0,
-        embedding_tokens: 0
-      }
-    end
-
-    private
-
-    def interaction_documents
-      interactions = @db[:interactions]
+    def interaction_documents(interaction_ids: nil)
+      interactions_scope = @db[:interactions]
         .where(workspace_id: workspace_id)
+      interactions_scope = interactions_scope.where(id: interaction_ids) if interaction_ids
+      interactions = interactions_scope
         .order(:id)
         .all
       people = @db[:people]

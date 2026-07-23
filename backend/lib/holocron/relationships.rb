@@ -5,6 +5,7 @@ require "securerandom"
 require "time"
 require "uri"
 require_relative "database"
+require_relative "semantic_index_jobs"
 
 module Holocron
   module Relationships
@@ -274,7 +275,9 @@ module Holocron
           correlation_id: correlation_id,
           occurred_at: now
         )
+        SemanticIndexJobs.enqueue!(workspace_id: workspace[:id], interaction_id: id, db: Database.db, now: now)
       end
+      SemanticIndexJobs.process_inline!(workspace: workspace, interaction_id: id)
       serialize_interaction(Database.db[:interactions].where(id: id).first)
     end
 
@@ -357,9 +360,11 @@ module Holocron
       }
       if interaction
         db[:interactions].where(id: interaction[:id]).update(interaction_values)
+        interaction_id = interaction[:id]
       else
+        interaction_id = SecureRandom.uuid
         db[:interactions].insert(
-          id: SecureRandom.uuid,
+          id: interaction_id,
           workspace_id: workspace[:id],
           authored_by_workspace_member_id: actor[:id],
           interaction_type: request_interaction_type(request_data.fetch(:source_channel)),
@@ -370,6 +375,8 @@ module Holocron
           **interaction_values
         )
       end
+      SemanticIndexJobs.enqueue!(workspace_id: workspace[:id], interaction_id: interaction_id, db: db, now: occurred_at)
+      interaction_id
     end
 
     def context_for_request(request_id:, workspace:)

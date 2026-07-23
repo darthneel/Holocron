@@ -66,6 +66,7 @@ module Holocron
       now = Time.now.utc
       request_id = SecureRandom.uuid
       correlation_id = SecureRandom.uuid
+      interaction_id = nil
 
       Database.db.transaction do
         extraction = extraction_id && Database.db[:request_extractions]
@@ -106,7 +107,7 @@ module Holocron
           updated_at: now
         )
         replace_children(request_id, normalized, now)
-        Relationships.sync_request_context(
+        interaction_id = Relationships.sync_request_context(
           request_id: request_id,
           normalized: normalized,
           workspace: workspace,
@@ -155,6 +156,7 @@ module Holocron
         end
       end
 
+      SemanticIndexJobs.process_inline!(workspace: workspace, interaction_id: interaction_id)
       fetch(id: request_id, workspace: workspace)
     end
 
@@ -173,6 +175,7 @@ module Holocron
       end
       now = Time.now.utc
       correlation_id = SecureRandom.uuid
+      interaction_id = nil
 
       Database.db.transaction do
         request = Database.db[:scheduling_requests].where(id: id, workspace_id: workspace[:id]).first
@@ -201,7 +204,7 @@ module Holocron
           )
         end
         replace_children(id, normalized, now)
-        Relationships.sync_request_context(
+        interaction_id = Relationships.sync_request_context(
           request_id: id,
           normalized: normalized,
           workspace: workspace,
@@ -220,6 +223,7 @@ module Holocron
         )
       end
 
+      SemanticIndexJobs.process_inline!(workspace: workspace, interaction_id: interaction_id)
       fetch(id: id, workspace: workspace)
     end
 

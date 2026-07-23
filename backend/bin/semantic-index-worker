@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ENV_FILE="$ROOT/../.env.local"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  . "$ENV_FILE"
+  set +a
+fi
+
+if [ -x /opt/homebrew/opt/ruby/bin/ruby ]; then
+  DEFAULT_RUBY_BIN=/opt/homebrew/opt/ruby/bin/ruby
+else
+  DEFAULT_RUBY_BIN="$(command -v ruby)"
+fi
+
+RUBY_BIN="${RUBY_BIN:-$DEFAULT_RUBY_BIN}"
+BUNDLE_BIN="$(dirname "$RUBY_BIN")/bundle"
+export PATH="$(dirname "$RUBY_BIN"):$PATH"
+
+cd "$ROOT"
+exec "$BUNDLE_BIN" exec "$RUBY_BIN" script/run_semantic_index_worker.rb

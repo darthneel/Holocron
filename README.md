@@ -85,6 +85,11 @@ The Rack API runs on Puma. `PUMA_MIN_THREADS`, `PUMA_MAX_THREADS`, and
 `WEB_CONCURRENCY` can be adjusted for the Render service; the defaults are
 `1`, `5`, and `0` respectively.
 
+Interaction embeddings are created inline locally, so a saved interaction is
+immediately searchable without a separate worker process. Set
+`SEMANTIC_INDEX_MODE=worker` only when running `backend/bin/semantic-index-worker`;
+that process drains the same durable PostgreSQL queue used in production.
+
 Request extraction, briefing generation, and Ask AI generation use deterministic
 fake providers by default. To use a real provider, export the configuration for
 each task before starting the API:
@@ -251,17 +256,19 @@ different model.
 
 ## Deployment
 
-Production is configured to run on Render in Oregon as two independently
-deployed Starter web services. `holocron-web` serves the vinext frontend and
-calls `holocron-api` over HTTPS. Only the API connects to the existing Neon US
-West PostgreSQL database; the Blueprint does not create a Render Postgres
-resource.
+Production is configured to run on Render in Oregon as two web services and a
+background worker. `holocron-web` serves the vinext frontend and calls
+`holocron-api` over HTTPS; `holocron-semantic-indexer` creates queued interaction
+embeddings. The API and worker connect to the existing Neon US West PostgreSQL
+database; the Blueprint does not create a Render Postgres resource.
 
 ```text
 Browser -> holocron-web -> holocron-api -> existing Neon database
+                                      ^
+holocron-semantic-indexer ------------|
 ```
 
-Both services deploy from the `production` branch using the root-level
+All three services deploy from the `production` branch using the root-level
 `render.yaml`. The frontend uses Node `22.22.0`; the API uses the Ruby version
 recorded in `backend/Gemfile.lock`.
 
@@ -275,6 +282,8 @@ in the Render dashboard when creating the Blueprint:
 | `holocron-api` | `DATABASE_URL` | Neon pooled URL (hostname contains `-pooler`; TLS required) |
 | `holocron-api` | `MIGRATION_DATABASE_URL` | Neon direct URL (TLS required) |
 | `holocron-api` | `AI_GATEWAY_API_KEY` | Production Vercel AI Gateway credential |
+| `holocron-semantic-indexer` | `DATABASE_URL` | Same Neon pooled URL as the API |
+| `holocron-semantic-indexer` | `AI_GATEWAY_API_KEY` | Same production Vercel AI Gateway credential |
 
 The API runtime uses `DATABASE_URL`; the pre-deploy migration temporarily uses
 `MIGRATION_DATABASE_URL`. The frontend receives the public

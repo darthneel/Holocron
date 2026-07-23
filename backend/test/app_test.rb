@@ -956,8 +956,9 @@ class HolocronAppTest < Minitest::Test
     actor = db[:workspace_members].where(workspace_id: workspace[:id]).first
     person = ask_ai_fixture_person(workspace: workspace, name: "Ask Configuration Person")
     now = Time.now.utc
+    interaction_id = SecureRandom.uuid
     db[:interactions].insert(
-      id: SecureRandom.uuid,
+      id: interaction_id,
       workspace_id: workspace.fetch(:id),
       person_id: person.fetch(:id),
       authored_by_workspace_member_id: actor.fetch(:id),
@@ -968,6 +969,7 @@ class HolocronAppTest < Minitest::Test
       created_at: now,
       updated_at: now
     )
+    Holocron::SemanticIndex.new(workspace: workspace).refresh_interaction!(interaction_id: interaction_id)
     original_provider = ENV["AI_ASK_PROVIDER"]
     original_model = ENV["AI_ASK_MODEL"]
     ENV["AI_ASK_PROVIDER"] = "unsupported"
@@ -1171,6 +1173,69 @@ class HolocronAppTest < Minitest::Test
     assert_equal 422, last_response.status
     assert_equal "Select a valid person.", parsed_response.dig("fields", "person_id")
     assert_equal initial_count, Holocron::Database.db[:interactions].count
+  end
+
+  def test_manual_interactions_are_indexed_inline_and_worker_jobs_can_be_drained
+    workspace = Holocron::Database.db[:workspaces].where(slug: "cedar-grove-mayor").first
+    person = Holocron::Database.db[:people].where(workspace_id: workspace[:id]).first
+    previous_mode = ENV["SEMANTIC_INDEX_MODE"]
+
+    ENV["SEMANTIC_INDEX_MODE"] = "inline"
+    post_json "/api/relationships/interactions", {
+      person_id: person[:id],
+      interaction_type: "note",
+      summary: "Inline indexing makes this interaction immediately searchable.",
+      occurred_at: "2026-07-12T16:30:00-07:00"
+    }, actor_headers
+    assert_equal 201, last_response.status
+    inline_id = parsed_response.fetch("id")
+
+    inline_job = Holocron::Database.db[:semantic_index_jobs].where(interaction_id: inline_id).first
+    assert_equal "completed", inline_job[:status]
+    assert Holocron::Database.db[:semantic_documents].where(source_id: inline_id).any?
+
+    ENV["SEMANTIC_INDEX_MODE"] = "worker"
+    post_json "/api/relationships/interactions", {
+      person_id: person[:id],
+      interaction_type: "note",
+      summary: "Worker indexing processes this interaction after the request returns.",
+      occurred_at: "2026-07-13T16:30:00-07:00"
+    }, actor_headers
+    assert_equal 201, last_response.status
+    worker_id = parsed_response.fetch("id")
+
+    assert_equal "pending", Holocron::Database.db[:semantic_index_jobs].where(interaction_id: worker_id).get(:status)
+    refute Holocron::Database.db[:semantic_documents].where(source_id: worker_id).any?
+    assert Holocron::SemanticIndexJobs.run_once(worker_id: "test-semantic-indexer", interaction_id: worker_id)
+    assert_equal "completed", Holocron::Database.db[:semantic_index_jobs].where(interaction_id: worker_id).get(:status)
+    assert Holocron::Database.db[:semantic_documents].where(source_id: worker_id).any?
+  ensure
+    ENV["SEMANTIC_INDEX_MODE"] = previous_mode
+  end
+
+  def test_scheduling_request_interaction_is_reindexed_after_an_edit
+    created = create_scheduling_request(purpose: "Initial purpose for semantic indexing.")
+    request_id = created.fetch("id")
+    db = Holocron::Database.db
+    interaction = db[:interactions].where(scheduling_request_id: request_id).first
+
+    initial_job = db[:semantic_index_jobs].where(interaction_id: interaction[:id]).first
+    assert_equal "completed", initial_job[:status]
+    assert_includes db[:semantic_documents].where(source_id: interaction[:id], unit_key: "overview").get(:content), "Initial purpose"
+
+    patch_json "/api/scheduling-requests/#{request_id}", scheduling_request_payload(
+      purpose: "Updated purpose for semantic indexing.",
+      expected_lock_version: created.fetch("lock_version")
+    ), actor_headers
+    assert last_response.ok?
+
+    updated_job = db[:semantic_index_jobs].where(interaction_id: interaction[:id]).first
+    assert_equal initial_job[:id], updated_job[:id]
+    assert_equal "completed", updated_job[:status]
+    assert_equal 2, updated_job[:revision]
+    content = db[:semantic_documents].where(source_id: interaction[:id], unit_key: "overview").get(:content)
+    assert_includes content, "Updated purpose"
+    refute_includes content, "Initial purpose"
   end
 
   def test_valid_workflow_transitions_create_history_decisions_and_audits

@@ -49,6 +49,44 @@ services:
         value: vercel
       - key: AI_EMBEDDING_MODEL
         value: openai/text-embedding-3-small
+      - key: SEMANTIC_INDEX_MODE
+        value: worker
+      - key: AI_GATEWAY_API_KEY
+        sync: false
+
+  - type: worker
+    name: holocron-semantic-indexer
+    runtime: ruby
+    plan: starter
+    numInstances: 1
+    region: oregon
+    branch: production
+    rootDir: backend
+    buildCommand: bundle install
+    startCommand: bundle exec ruby script/run_semantic_index_worker.rb
+    maxShutdownDelaySeconds: 60
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - backend/**
+        - render.yaml
+    envVars:
+      - key: RACK_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_POOL_SIZE
+        value: "3"
+      - key: DATABASE_POOL_TIMEOUT
+        value: "5"
+      - key: DATABASE_CONNECTION_VALIDATION_TIMEOUT
+        value: "30"
+      - key: AI_EMBEDDING_PROVIDER
+        value: vercel
+      - key: AI_EMBEDDING_MODEL
+        value: openai/text-embedding-3-small
+      - key: SEMANTIC_INDEX_MODE
+        value: worker
       - key: AI_GATEWAY_API_KEY
         sync: false
 

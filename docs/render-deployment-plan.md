@@ -2,18 +2,22 @@
 
 ## Objective
 
-Deploy Holocron to Render as two always-on Starter web services while retaining the existing Neon PostgreSQL database as the single production datastore.
+Deploy Holocron to Render as two always-on Starter web services and one
+background worker while retaining the existing Neon PostgreSQL database as the
+single production datastore.
 
-The target recurring Render compute cost is **$14 per month**:
+The target recurring Render compute cost is **$21 per month**:
 
 | Service | Render type | Plan | Monthly cost |
 | --- | --- | --- | ---: |
 | Holocron web | Node web service | Starter | $7 |
 | Holocron API | Ruby web service | Starter | $7 |
+| Semantic indexer | Ruby background worker | Starter | $7 |
 | Existing Neon database | External PostgreSQL | Current Neon plan | Unchanged |
-| **Render total** |  |  | **$14** |
+| **Render total** |  |  | **$21** |
 
-Render workspace-plan upgrades are not required. The cost comes from the two Starter compute instances. Do not create a Render Postgres resource.
+Render workspace-plan upgrades are not required. The cost comes from the three
+Starter compute instances. Do not create a Render Postgres resource.
 
 ## Target Architecture
 
@@ -30,9 +34,12 @@ Holocron API (Render Starter, Ruby/Roda/Puma)
   | TLS PostgreSQL connection
   v
 Existing Neon database
+
+Semantic indexer (Render Starter background worker) -> Existing Neon database
 ```
 
-The frontend never receives database credentials. Only the API connects to Neon.
+The frontend never receives database credentials. Only the API and semantic
+indexer connect to Neon.
 
 ## Deployment Decisions
 
@@ -42,6 +49,7 @@ The initial deployment decisions are confirmed:
 | --- | --- |
 | Frontend service name | `holocron-web` |
 | API service name | `holocron-api` |
+| Semantic indexer service name | `holocron-semantic-indexer` |
 | Render region | `oregon`, matching the Neon US West location |
 | Production Git branch | `production` |
 | Request extraction | Vercel AI Gateway with `openai/gpt-5.6-luna` |
@@ -52,7 +60,7 @@ The initial deployment decisions are confirmed:
 | Custom domains | None planned |
 
 Create the `production` branch from the verified release commit before connecting
-the Blueprint. Both Render services should deploy only from this branch.
+the Blueprint. All Render services should deploy only from this branch.
 
 The production AI configuration intentionally matches the current local configuration. Render will receive the same provider and model names plus its own securely stored copy of `AI_GATEWAY_API_KEY`. No AI credential will be committed to the repository.
 
@@ -60,7 +68,8 @@ The production AI configuration intentionally matches the current local configur
 
 ### 1. Add a Render Blueprint
 
-Add a root-level `render.yaml` defining exactly two services and no database resources.
+Add a root-level `render.yaml` defining two web services, one background worker,
+and no database resources.
 
 The API service should use:
 
@@ -75,6 +84,12 @@ The API service should use:
 - Start command: `bundle exec puma --config config/puma.rb config.ru`
 - Health check: `/health`
 - Auto-deploy trigger: `commit`
+
+The semantic indexer should use the same Ruby runtime, `backend` root directory,
+and `bundle install` build command. Start it with
+`bundle exec ruby script/run_semantic_index_worker.rb`, configure the same Neon
+pooled `DATABASE_URL` and embedding variables as the API, and set
+`SEMANTIC_INDEX_MODE=worker`. It has no public URL or health-check path.
 
 The frontend service should use:
 
@@ -208,7 +223,15 @@ AI_BRIEFING_GENERATION_MODEL=openai/gpt-5.6-terra
 AI_EMBEDDING_PROVIDER=vercel
 AI_EMBEDDING_MODEL=openai/text-embedding-3-small
 AI_GATEWAY_API_KEY=<secret configured in Render>
+SEMANTIC_INDEX_MODE=worker
 ```
+
+### Semantic indexer variables
+
+Configure `holocron-semantic-indexer` with the same `DATABASE_URL`, database
+pool settings, `AI_EMBEDDING_PROVIDER`, `AI_EMBEDDING_MODEL`, and
+`AI_GATEWAY_API_KEY` as the API. It does not need `MIGRATION_DATABASE_URL` or
+the API's frontend and Puma variables.
 
 Do not configure `TEST_DATABASE_URL` in production.
 
@@ -239,15 +262,16 @@ allowed `FRONTEND_ORIGINS` value.
 
 1. Push the repository preparation changes to the production branch.
 2. In Render, create a new Blueprint from the repository's `render.yaml`.
-3. Review that the Blueprint creates two Starter web services and no Render database.
+3. Review that the Blueprint creates two Starter web services, one Starter background worker, and no Render database.
 4. Enter every `sync: false` secret when prompted.
-5. Confirm the expected cost is $7 per service, $14 per month total.
+5. Confirm the expected cost is $7 per service, $21 per month total.
 6. Start the Blueprint sync.
 7. Confirm the API build succeeds.
 8. Confirm the API pre-deploy migration succeeds against the Neon direct connection.
 9. Confirm the API passes `GET /health`.
-10. Confirm the frontend build receives `NEXT_PUBLIC_API_URL` and starts successfully.
-11. Open the frontend's Render URL and confirm browser requests reach the API without CORS errors.
+10. Confirm the semantic indexer starts and can reach Neon and the embedding provider.
+11. Confirm the frontend build receives `NEXT_PUBLIC_API_URL` and starts successfully.
+12. Open the frontend's Render URL and confirm browser requests reach the API without CORS errors.
 
 ## Phase 5: Production Smoke Test
 
@@ -279,7 +303,7 @@ Avoid creating permanent test records during the first smoke test because the ap
 - Health, CORS, `Server-Timing`, workspace entry, request loading, briefing
   loading, briefing count, and Sources open/close smoke checks passed.
 - Post-release logs contained no application errors or HTTP 5xx responses.
-- Render compute is two $7 Starter services, totaling $14 per month.
+- Render compute at that time was two $7 Starter services, totaling $14 per month.
 
 ## Phase 6: Operational Setup
 
