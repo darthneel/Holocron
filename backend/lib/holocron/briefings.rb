@@ -325,6 +325,11 @@ module Holocron
 
       verify_lock!(briefing, expected)
       ensure_editable!(briefing)
+      # Older deployed clients still call /generate immediately after scheduling.
+      # Scheduling already enqueues that initial generation, so running it here
+      # would put the AI request back on the click path (and can duplicate work).
+      return fetch(id: id, workspace: workspace) if %w[pending running].include?(briefing[:generation_status])
+
       manifest = BriefingContextAssembler.new(workspace: workspace, strategy: strategy).call(briefing: briefing)
       outcome = BriefingGeneration.generate(manifest: manifest, router: router)
       unless outcome.status == "succeeded"

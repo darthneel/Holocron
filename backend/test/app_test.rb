@@ -1324,6 +1324,22 @@ class HolocronAppTest < Minitest::Test
     assert_equal "completed", db[:briefing_generation_jobs].where(briefing_id: briefing.fetch("id")).get(:status)
   end
 
+  def test_generate_does_not_run_inline_while_a_scheduled_briefing_is_queued
+    proposed = create_scheduling_request(isolated_request_overrides("queued-generation"))
+
+    post_json "/api/scheduling-requests/#{proposed.fetch("id")}/meeting", meeting_payload, actor_headers
+
+    assert_equal 201, last_response.status
+    briefing = parsed_response
+    post_json "/api/briefings/#{briefing.fetch("id")}/generate", {
+      expected_lock_version: briefing.fetch("lock_version")
+    }, actor_headers
+
+    assert_equal 200, last_response.status
+    assert_equal "pending", parsed_response.fetch("generation_status")
+    assert_equal 1, Holocron::Database.db[:briefing_versions].where(briefing_id: briefing.fetch("id")).count
+  end
+
   def test_stale_schedule_is_rejected_without_partial_writes
     created = create_scheduling_request
     request_id = created.fetch("id")
