@@ -1868,6 +1868,16 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
     setCalendarStart((current) => addCalendarDays(current, delta));
   }
 
+  function returnCalendarToToday() {
+    followsTodayRef.current = true;
+    if (calendarStart === today) return;
+
+    setCalendarDirection(calendarStart < today ? "next" : "previous");
+    setIsCalendarLoading(true);
+    setCalendarError("");
+    setCalendarStart(today);
+  }
+
   function openCalendarEntry(entry: FoundationCalendarEntry) {
     if (entry.kind === "scheduled" && entry.briefing_id) {
       onOpenScheduled(entry.briefing_id);
@@ -1884,18 +1894,6 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
           <h1 suppressHydrationWarning>{greeting}, {firstName}</h1>
           <p>Here is where {principalName}&apos;s time and your attention meet.</p>
         </div>
-        <div className="foundation-calendar-actions" aria-label="Calendar navigation">
-          <div>
-            <strong>{calendarDayLabel(visibleDays[0]).month} {calendarDayLabel(visibleDays[0]).date} to {calendarDayLabel(visibleDays[2]).month} {calendarDayLabel(visibleDays[2]).date}</strong>
-            <span>Three-day desk view</span>
-          </div>
-          <button type="button" onClick={() => shiftCalendar("previous")} aria-label="Show previous three days">
-            <ChevronLeft aria-hidden="true" />
-          </button>
-          <button type="button" onClick={() => shiftCalendar("next")} aria-label="Show next three days">
-            <ChevronRight aria-hidden="true" />
-          </button>
-        </div>
       </div>
 
       <div className="foundation-dashboard-grid">
@@ -1905,9 +1903,26 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
               <CalendarDays aria-hidden="true" />
               <span><strong>Principal&apos;s calendar</strong><small>8:00 AM to 6:00 PM</small></span>
             </div>
-            <div className="foundation-calendar-legend" aria-label="Meeting status legend">
-              <span className="is-scheduled"><i aria-hidden="true" /> Scheduled</span>
-              <span className="is-proposed"><i aria-hidden="true" /> Proposed</span>
+            <div className="foundation-calendar-toolbar">
+              <div className="foundation-calendar-legend" aria-label="Meeting status legend">
+                <span className="is-scheduled"><i aria-hidden="true" /> Scheduled</span>
+                <span className="is-proposed"><i aria-hidden="true" /> Proposed</span>
+              </div>
+              <div className="foundation-calendar-actions" aria-label="Calendar navigation">
+                <div>
+                  <strong>{calendarDayLabel(visibleDays[0]).month} {calendarDayLabel(visibleDays[0]).date} to {calendarDayLabel(visibleDays[2]).month} {calendarDayLabel(visibleDays[2]).date}</strong>
+                  <span>Three-day desk view</span>
+                </div>
+                <button className={`foundation-calendar-today ${calendarStart === today ? "is-current" : ""}`} type="button" onClick={returnCalendarToToday} aria-pressed={calendarStart === today}>
+                  TODAY
+                </button>
+                <button type="button" onClick={() => shiftCalendar("previous")} aria-label="Show previous three days">
+                  <ChevronLeft aria-hidden="true" />
+                </button>
+                <button type="button" onClick={() => shiftCalendar("next")} aria-label="Show next three days">
+                  <ChevronRight aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
 

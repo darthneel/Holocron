@@ -6403,7 +6403,7 @@ a:focus-visible {
 
 .foundation-calendar-actions {
   display: grid;
-  grid-template-columns: minmax(150px, auto) 38px 38px;
+  grid-template-columns: minmax(150px, auto) auto 38px 38px;
   align-items: center;
   gap: 6px;
 }
@@ -6444,6 +6444,19 @@ a:focus-visible {
   color: var(--ink);
   cursor: pointer;
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.foundation-calendar-actions .foundation-calendar-today {
+  width: auto;
+  padding: 0 10px;
+  color: var(--ink-soft);
+  font: 700 9px var(--font-geist-mono), monospace;
+  letter-spacing: 0.08em;
+}
+
+.foundation-calendar-actions .foundation-calendar-today.is-current {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong));
+  color: var(--accent);
 }
 
 .foundation-calendar-actions button:hover:not(:disabled) {
@@ -6491,6 +6504,14 @@ a:focus-visible {
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--line-strong);
+}
+
+.foundation-calendar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 22px;
+  min-width: 0;
 }
 
 .foundation-calendar-card-head > div:first-child,
@@ -6940,7 +6961,7 @@ a:focus-visible {
 
   .foundation-calendar-actions {
     width: 100%;
-    grid-template-columns: minmax(0, 1fr) 38px 38px;
+    grid-template-columns: minmax(0, 1fr) auto 38px 38px;
   }
 
   .foundation-calendar-actions > div {
@@ -6951,6 +6972,13 @@ a:focus-visible {
     align-items: flex-start;
     flex-direction: column;
     padding-block: 13px;
+  }
+
+  .foundation-calendar-toolbar {
+    width: 100%;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .foundation-task-list {
