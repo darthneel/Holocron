@@ -1210,6 +1210,73 @@ a:focus-visible {
   margin-top: 16px;
 }
 
+.meeting-time-options {
+  min-width: 0;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+}
+
+.meeting-time-options legend {
+  padding: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.meeting-time-options-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.meeting-time-option {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.meeting-time-option.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--surface) 84%, var(--accent));
+}
+
+.meeting-time-option input {
+  width: 14px;
+  height: 14px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+
+.meeting-time-option span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.meeting-time-option strong,
+.meeting-time-option small {
+  overflow-wrap: anywhere;
+}
+
+.meeting-time-option strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.meeting-time-option small {
+  color: var(--ink-soft);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .meeting-create-form > .primary-command {
   margin-top: 14px;
 }

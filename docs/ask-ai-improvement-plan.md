@@ -32,17 +32,29 @@ The following must remain release blockers for every improvement:
 
 ## Investigation findings
 
-### 1. Index freshness is the largest reliability gap
+### 1. Index freshness is now covered for normal writes
 
-`AskAI.answer` searches with `refresh: false`. This is appropriate for a
-read-only, low-latency Ask request, but interaction create and update paths do
-not enqueue a semantic-index refresh. A newly saved interaction can therefore
-remain invisible until an operator runs the backfill command.
+`AskAI.answer` still searches with `refresh: false`. That remains the correct
+read-only, low-latency behavior. Commit `c8667d6` closes the prior write-path
+gap by adding a durable, unique-per-interaction `semantic_index_jobs` queue:
 
-The existing backend test intended to exercise an Ask provider-configuration
-failure currently exposes this behavior: it creates an interaction but does not
-index it, so Ask returns a successful no-evidence result before it ever calls
-the misconfigured provider.
+- manual interactions enqueue inside the interaction transaction;
+- scheduling-request interactions enqueue on create and update;
+- local development processes the job inline, making a successful write
+  immediately searchable; and
+- production configures a dedicated worker to drain the queue asynchronously.
+
+The indexer refreshes only the affected interaction, rather than rebuilding the
+whole workspace. Tests now cover inline manual indexing, worker draining, and
+reindexing after a scheduling-request edit. The previously failing
+provider-configuration test indexes its fixture before asserting that Ask calls
+the provider.
+
+This solves the original freshness issue for interactions written through these
+normal API paths once migration `018` and the production worker are live. It
+does not by itself provide recovery for a job left `running` after a worker
+crash, index pre-existing interactions, or cover imports that bypass those API
+write paths.
 
 ### 2. The final source budget is applied before qualification is complete
 
@@ -124,26 +136,34 @@ retrieval strategy, model, latency, and score for each run.
 **Exit criteria:** a repeatable baseline exists; the fixture-contract test is
 retained as a safety test rather than presented as an answer-quality evaluation.
 
-### Phase 1 — Make indexed evidence fresh
+### Phase 1 — Harden indexed-evidence freshness
 
-Add an asynchronous indexing workflow triggered after interaction creates and
-updates. Use a durable outbox or job table/queue rather than embedding inside the
-Ask HTTP request. The worker should coalesce repeat updates to an interaction,
-refresh only changed semantic documents, retry transient provider failures, and
-record the most recent successful index time per workspace or source.
+**Status: delivered for normal API writes; production hardening remains.**
 
-While a matching interaction is pending indexing, use a bounded, workspace-safe
-lexical fallback for exact resolved entities. The fallback must preserve the
-same interaction-only and workspace restrictions as semantic retrieval, and
-must return explicit freshness limitations when it cannot safely provide a
-complete answer.
+The durable job queue, write-path enqueueing, single-interaction refresh, inline
+local mode, and Render worker are implemented in commit `c8667d6`. This means
+Ask can remain read-only while newly created manual interactions and newly
+created or edited scheduling-request interactions become searchable.
 
-Expose internal freshness/backlog metrics. In the user interface, show a small
-non-sensitive notice only when recent interaction updates are not yet searchable.
+Complete the remaining operational work:
 
-**Exit criteria:** an interaction added or edited through the normal API becomes
-Ask-searchable within the freshness SLO; the configuration-failure endpoint test
-indexes its evidence before asserting that generation is reached.
+- reclaim jobs whose worker died after changing their status to `running`;
+  `locked_at` should become a lease with a bounded expiry and safe retry;
+- add queue-depth, oldest-pending-job age, retry count, failure count, and
+  write-to-index latency metrics and alerts;
+- perform and record an initial backfill after migration for interactions that
+  existed before the queue was introduced; and
+- make imports and maintenance scripts enqueue jobs or explicitly invoke a
+  scoped backfill. Do not assume direct database writes become searchable.
+
+Defer an exact-entity lexical fallback unless metrics show worker lag breaches
+the freshness SLO. If introduced, it must preserve the same interaction-only and
+workspace restrictions as semantic retrieval and make freshness limitations
+explicit rather than silently mixing stale and fresh sources.
+
+**Exit criteria:** migration `018` is applied, the production worker is healthy,
+all existing interactions are backfilled, a worker restart cannot strand a job,
+and write-to-searchable p50/p95 meet the published freshness SLO.
 
 ### Phase 2 — Improve retrieval before changing the model
 
@@ -227,8 +247,10 @@ and regressions block promotion.
 
 - The Ask fixture contract passes with the repository's configured Ruby runtime.
 - Frontend lint passes.
-- The backend suite has one Ask test failure: the provider-configuration test
-  expects `503`, but its unindexed fixture causes Ask to return `200` with a
-  no-evidence result. This is a test setup and index-freshness signal, not
-  evidence that an unsupported configured provider succeeds once generation is
-  reached.
+- The backend suite passes: 92 runs, 822 assertions, zero failures and zero
+  errors. This includes indexing a manual interaction inline, draining a queued
+  worker job, reindexing a scheduling-request interaction after an edit, and the
+  Ask provider-configuration path.
+- The feature is ready to rely on the new index-freshness mechanism only after
+  migration `018` and the `holocron-semantic-indexer` worker are deployed in the
+  target environment.

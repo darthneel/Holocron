@@ -289,6 +289,7 @@ type SchedulingRequest = {
   };
   purpose: string;
   requested_duration_minutes: number;
+  preferred_location: string | null;
   availability_notes: string | null;
   source_channel: string;
   original_request_text: string | null;
@@ -454,6 +455,7 @@ type RequestForm = {
   requester_organization: string;
   purpose: string;
   requested_duration_minutes: string;
+  preferred_location: string;
   availability_notes: string;
   source_channel: string;
   original_request_text: string;
@@ -477,6 +479,7 @@ type RequestExtraction = {
     };
     purpose: string | null;
     requested_duration_minutes: number | null;
+    preferred_location?: string | null;
     availability_notes: string | null;
     participants: Array<{
       name: string | null;
@@ -734,6 +737,7 @@ function blankRequestForm(members: WorkspaceMember[]): RequestForm {
     requester_organization: "",
     purpose: "",
     requested_duration_minutes: "30",
+    preferred_location: "",
     availability_notes: "",
     source_channel: "email",
     original_request_text: "",
@@ -751,6 +755,7 @@ function requestFormFromDetail(request: SchedulingRequest): RequestForm {
     requester_organization: request.requester.organization ?? "",
     purpose: request.purpose,
     requested_duration_minutes: String(request.requested_duration_minutes),
+    preferred_location: request.preferred_location ?? "",
     availability_notes: request.availability_notes ?? "",
     source_channel: request.source_channel,
     original_request_text: request.original_request_text ?? "",
@@ -780,6 +785,7 @@ function requestFormFromExtraction(extraction: RequestExtraction, inputText: str
     requester_organization: proposal.requester.organization ?? "",
     purpose: proposal.purpose ?? "",
     requested_duration_minutes: proposal.requested_duration_minutes === null ? "" : String(proposal.requested_duration_minutes),
+    preferred_location: proposal.preferred_location ?? "",
     availability_notes: proposal.availability_notes ?? "",
     source_channel: "email",
     original_request_text: inputText.trim(),
@@ -2526,8 +2532,8 @@ function RequestComposer({ form, extraction, formErrors, isSaving, isEditing, sc
     {extraction ? <aside className="extraction-review-band" aria-label="Extracted request review summary"><Sparkles aria-hidden="true" /><div className="extraction-review-content"><header className="extraction-review-header"><div><strong>AI draft</strong><span>Review before creating</span></div><small>{extraction.provider} · {extraction.model} · {extraction.prompt_version}</small></header>{form.briefing_context.agenda_items.length > 0 ? <section className="extraction-agenda"><h3>Briefing agenda</h3><ul>{form.briefing_context.agenda_items.map((item, index) => <li key={`${item.topic ?? "agenda"}-${index}`}><strong>{item.topic ?? `Agenda item ${index + 1}`}</strong>{item.ask || item.decision_needed ? <span>{item.ask ?? item.decision_needed}</span> : null}</li>)}</ul></section> : null}{extraction.warnings.length > 0 ? <section className="extraction-review-notices"><h3>Check before saving</h3><ul>{extraction.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section> : null}</div></aside> : null}
     {Object.keys(formErrors).length > 0 ? <p className="form-error form-error-summary" role="alert">{Object.values(formErrors).join(" ")}</p> : null}
     <fieldset className="request-fieldset"><legend>Requester</legend><div className="field-grid two"><Field label="Name" error={formErrors.requester_name}><input value={form.requester_name} onChange={(event) => onFieldChange("requester_name", event.target.value)} /></Field><Field label="Organization"><input value={form.requester_organization} onChange={(event) => onFieldChange("requester_organization", event.target.value)} /></Field><Field label="Email" error={formErrors.requester_email}><input type="email" value={form.requester_email} onChange={(event) => onFieldChange("requester_email", event.target.value)} /></Field><Field label="Source" error={formErrors.source_channel}><select value={form.source_channel} disabled={Boolean(extraction)} onChange={(event) => onFieldChange("source_channel", event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field></div></fieldset>
-    <fieldset className="request-fieldset"><legend>Request</legend><div className="field-grid two"><Field label="Duration (minutes)" error={formErrors.requested_duration_minutes}><input type="number" min="15" max="480" step="15" value={form.requested_duration_minutes} onChange={(event) => onFieldChange("requested_duration_minutes", event.target.value)} /></Field><Field label="Assigned scheduler" error={formErrors.assigned_scheduler_member_id}><select value={form.assigned_scheduler_member_id} onChange={(event) => onFieldChange("assigned_scheduler_member_id", event.target.value)}>{schedulerMembers.map((member) => <option key={member.id} value={member.id}>{member.display_name} · {formatRole(member.role)}</option>)}</select></Field></div><Field label="Purpose" error={formErrors.purpose}><textarea rows={3} value={form.purpose} onChange={(event) => onFieldChange("purpose", event.target.value)} /></Field><Field label="Availability notes"><textarea rows={2} value={form.availability_notes} onChange={(event) => onFieldChange("availability_notes", event.target.value)} placeholder="Any useful context that does not fit a candidate window." /></Field><Field label="Original request text"><textarea rows={3} readOnly={Boolean(extraction)} value={form.original_request_text} onChange={(event) => onFieldChange("original_request_text", event.target.value)} /></Field></fieldset>
-    <fieldset className="request-fieldset"><div className="fieldset-heading"><legend>Candidate windows</legend><button className="subtle-command" type="button" onClick={onAddCandidateWindow}><Plus aria-hidden="true" />Add window</button></div>{form.candidate_windows.length === 0 ? <p className="empty-fieldset">No structured windows yet. Notes can still capture a general preference.</p> : form.candidate_windows.map((window, index) => <div className="repeat-row" key={`window-${index}`}><div className="field-grid candidate-grid"><Field label="Date" error={formErrors[`candidate_windows.${index}.candidate_date`]}><input type="date" value={window.candidate_date} onChange={(event) => onCandidateWindowChange(index, "candidate_date", event.target.value)} /></Field><Field label="Start"><input type="datetime-local" value={window.starts_at ?? ""} onChange={(event) => onCandidateWindowChange(index, "starts_at", event.target.value)} /></Field><Field label="End" error={formErrors[`candidate_windows.${index}.ends_at`]}><input type="datetime-local" value={window.ends_at ?? ""} onChange={(event) => onCandidateWindowChange(index, "ends_at", event.target.value)} /></Field></div><Field label="Notes"><input value={window.notes} onChange={(event) => onCandidateWindowChange(index, "notes", event.target.value)} placeholder="Location, timezone, or preference" /></Field><button className="remove-button" type="button" onClick={() => onRemoveCandidateWindow(index)} title="Remove candidate window"><X aria-hidden="true" /></button></div>)}</fieldset>
+    <fieldset className="request-fieldset"><legend>Request</legend><div className="field-grid two"><Field label="Duration (minutes)" error={formErrors.requested_duration_minutes}><input type="number" min="15" max="480" step="15" value={form.requested_duration_minutes} onChange={(event) => onFieldChange("requested_duration_minutes", event.target.value)} /></Field><Field label="Assigned scheduler" error={formErrors.assigned_scheduler_member_id}><select value={form.assigned_scheduler_member_id} onChange={(event) => onFieldChange("assigned_scheduler_member_id", event.target.value)}>{schedulerMembers.map((member) => <option key={member.id} value={member.id}>{member.display_name} · {formatRole(member.role)}</option>)}</select></Field></div><Field label="Purpose" error={formErrors.purpose}><textarea rows={3} value={form.purpose} onChange={(event) => onFieldChange("purpose", event.target.value)} /></Field><Field label="Preferred location"><input value={form.preferred_location} onChange={(event) => onFieldChange("preferred_location", event.target.value)} placeholder="City Hall, video call, or another stated location" /></Field><Field label="Availability notes"><textarea rows={2} value={form.availability_notes} onChange={(event) => onFieldChange("availability_notes", event.target.value)} placeholder="Any useful context that does not fit a candidate window." /></Field><Field label="Original request text"><textarea rows={3} readOnly={Boolean(extraction)} value={form.original_request_text} onChange={(event) => onFieldChange("original_request_text", event.target.value)} /></Field></fieldset>
+    <fieldset className="request-fieldset"><div className="fieldset-heading"><legend>Candidate windows</legend><button className="subtle-command" type="button" onClick={onAddCandidateWindow}><Plus aria-hidden="true" />Add window</button></div>{form.candidate_windows.length === 0 ? <p className="empty-fieldset">No structured windows yet. Notes can still capture a general preference.</p> : form.candidate_windows.map((window, index) => <div className="repeat-row" key={`window-${index}`}><div className="field-grid candidate-grid"><Field label="Date" error={formErrors[`candidate_windows.${index}.candidate_date`]}><input type="date" value={window.candidate_date} onChange={(event) => onCandidateWindowChange(index, "candidate_date", event.target.value)} /></Field><Field label="Start"><input type="datetime-local" value={window.starts_at ?? ""} onChange={(event) => onCandidateWindowChange(index, "starts_at", event.target.value)} /></Field><Field label="End" error={formErrors[`candidate_windows.${index}.ends_at`]}><input type="datetime-local" value={window.ends_at ?? ""} onChange={(event) => onCandidateWindowChange(index, "ends_at", event.target.value)} /></Field></div><Field label="Notes"><input value={window.notes} onChange={(event) => onCandidateWindowChange(index, "notes", event.target.value)} placeholder="Timezone, preference, or other window context" /></Field><button className="remove-button" type="button" onClick={() => onRemoveCandidateWindow(index)} title="Remove candidate window"><X aria-hidden="true" /></button></div>)}</fieldset>
     <fieldset className="request-fieldset"><div className="fieldset-heading"><legend>Participants</legend><button className="subtle-command" type="button" onClick={onAddParticipant}><UserPlus aria-hidden="true" />Add participant</button></div>{form.participants.length === 0 ? <p className="empty-fieldset">Add people beyond the requester when they are relevant to the meeting.</p> : form.participants.map((participant, index) => <div className="repeat-row participant-row" key={`participant-${index}`}><div className="field-grid participant-grid"><Field label="Name"><input value={participant.name} onChange={(event) => onParticipantChange(index, "name", event.target.value)} /></Field><Field label="Email"><input type="email" value={participant.email} onChange={(event) => onParticipantChange(index, "email", event.target.value)} /></Field><Field label="Role"><select value={participant.role} onChange={(event) => onParticipantChange(index, "role", event.target.value)}><option value="">Select role</option><option value="required">Required</option><option value="optional">Optional</option><option value="staff">Staff</option></select></Field></div><Field label="Organization"><input value={participant.organization} onChange={(event) => onParticipantChange(index, "organization", event.target.value)} /></Field><button className="remove-button" type="button" onClick={() => onRemoveParticipant(index)} title="Remove participant"><X aria-hidden="true" /></button></div>)}</fieldset>
     <div className="composer-actions"><button className="icon-text-button" type="button" onClick={onCancel}><ArrowLeft aria-hidden="true" /><span>Cancel</span></button><button className="primary-command" type="submit" disabled={isSaving}><Save aria-hidden="true" /><span>{isSaving ? "Saving" : isEditing ? "Save changes" : "Create request"}</span></button></div>
   </form>;
@@ -2552,12 +2558,14 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
   const [reasonCode, setReasonCode] = useState("");
   const [notes, setNotes] = useState("");
   const [expandedPersonHistory, setExpandedPersonHistory] = useState<Record<string, boolean>>({});
-  const preferredWindow = request.candidate_windows.find((window) => window.starts_at && window.ends_at);
+  const suggestedWindows = request.candidate_windows.filter((window) => window.starts_at && window.ends_at);
+  const preferredWindow = suggestedWindows[0];
+  const [timeSelection, setTimeSelection] = useState(preferredWindow?.id ?? "custom");
   const [meetingForm, setMeetingForm] = useState({
     title: request.purpose,
     starts_at: datetimeLocalValue(preferredWindow?.starts_at ?? null),
     ends_at: datetimeLocalValue(preferredWindow?.ends_at ?? null),
-    location: preferredWindow?.notes ?? "",
+    location: request.preferred_location ?? "",
   });
   const priorInteractions = request.relationship_context.interactions.filter((interaction) => !interaction.current_request);
   const relationshipPeople = request.relationship_context.people;
@@ -2622,6 +2630,21 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
       ends_at: officeLocalToIso(meetingForm.ends_at),
       location: meetingForm.location,
     });
+  }
+
+  function chooseSuggestedWindow(window: CandidateWindow) {
+    if (!window.starts_at || !window.ends_at) return;
+    setTimeSelection(window.id ?? `window-${window.candidate_date}-${window.starts_at}`);
+    setMeetingForm((current) => ({
+      ...current,
+      starts_at: datetimeLocalValue(window.starts_at),
+      ends_at: datetimeLocalValue(window.ends_at),
+    }));
+  }
+
+  function chooseCustomTime() {
+    setTimeSelection("custom");
+    setMeetingForm((current) => ({...current, starts_at: "", ends_at: ""}));
   }
 
   return (
@@ -2693,11 +2716,26 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
             </>
           ) : canMutate ? (
             <form className="meeting-create-form" onSubmit={createMeeting}>
+              <fieldset className="meeting-time-options">
+                <legend>Meeting time</legend>
+                <div className="meeting-time-options-list">
+                  {suggestedWindows.map((window, index) => {
+                    const windowId = window.id ?? `window-${window.candidate_date}-${window.starts_at}`;
+                    return <label className={`meeting-time-option ${timeSelection === windowId ? "is-selected" : ""}`} key={windowId}>
+                      <input type="radio" name="meeting-time" checked={timeSelection === windowId} onChange={() => chooseSuggestedWindow(window)} />
+                      <span><strong>{`Suggested window ${index + 1}`}</strong><small>{formatDateTime(window.starts_at!)} to {formatDateTime(window.ends_at!)}</small></span>
+                    </label>;
+                  })}
+                  <label className={`meeting-time-option ${timeSelection === "custom" ? "is-selected" : ""}`}>
+                    <input type="radio" name="meeting-time" checked={timeSelection === "custom"} onChange={chooseCustomTime} />
+                    <span><strong>Custom date and time</strong><small>Enter a date and time outside the suggested windows.</small></span>
+                  </label>
+                </div>
+              </fieldset>
               <div className="field-grid two">
                 <Field label="Meeting title"><input required value={meetingForm.title} onChange={(event) => setMeetingForm({...meetingForm, title: event.target.value})} /></Field>
                 <Field label="Location"><input value={meetingForm.location} onChange={(event) => setMeetingForm({...meetingForm, location: event.target.value})} /></Field>
-                <Field label="Starts"><input required type="datetime-local" value={meetingForm.starts_at} onChange={(event) => setMeetingForm({...meetingForm, starts_at: event.target.value})} /></Field>
-                <Field label="Ends"><input required type="datetime-local" value={meetingForm.ends_at} onChange={(event) => setMeetingForm({...meetingForm, ends_at: event.target.value})} /></Field>
+                {timeSelection === "custom" ? <><Field label="Starts"><input required type="datetime-local" value={meetingForm.starts_at} onChange={(event) => setMeetingForm({...meetingForm, starts_at: event.target.value})} /></Field><Field label="Ends"><input required type="datetime-local" value={meetingForm.ends_at} onChange={(event) => setMeetingForm({...meetingForm, ends_at: event.target.value})} /></Field></> : null}
               </div>
               <button className="primary-command" type="submit" disabled={isBriefingSaving}><BookOpen aria-hidden="true" /><span>{isBriefingSaving ? "Creating" : "Create meeting and briefing"}</span></button>
             </form>

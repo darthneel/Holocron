@@ -226,6 +226,7 @@ class HolocronAppTest < Minitest::Test
     assert_equal "priya.step6@example.org", extraction.dig("proposal", "requester", "email")
     assert_equal "Regional mobility briefing", extraction.dig("proposal", "purpose")
     assert_equal 45, extraction.dig("proposal", "requested_duration_minutes")
+    assert_equal "City Hall - Conference Room B", extraction.dig("proposal", "preferred_location")
     assert_equal "2026-09-08", extraction.dig("proposal", "candidate_windows", 0, "candidate_date")
     assert_equal "Regional mobility briefing", extraction.dig("proposal", "briefing_context", "agenda_items", 0, "topic")
     assert_equal request_count, Holocron::Database.db[:scheduling_requests].count
@@ -255,6 +256,7 @@ class HolocronAppTest < Minitest::Test
       requester_organization: proposal.dig("requester", "organization"),
       purpose: proposal.fetch("purpose"),
       requested_duration_minutes: proposal.fetch("requested_duration_minutes"),
+      preferred_location: proposal.fetch("preferred_location"),
       availability_notes: proposal.fetch("availability_notes"),
       source_channel: "other",
       original_request_text: "This must not replace the extraction input.",
@@ -270,6 +272,7 @@ class HolocronAppTest < Minitest::Test
     request = parsed_response
     assert_equal "email", request.fetch("source_channel")
     assert_equal extraction_email, request.fetch("original_request_text")
+    assert_equal "City Hall - Conference Room B", request.fetch("preferred_location")
     assert_equal proposal.fetch("briefing_context"), request.fetch("briefing_context")
     assert_equal extraction.fetch("id"), request.dig("request_extraction", "id")
     stored = Holocron::Database.db[:request_extractions].where(id: extraction.fetch("id")).first
@@ -2763,6 +2766,7 @@ class HolocronAppTest < Minitest::Test
       Organization: Front Range Mobility Coalition
       Subject: Regional mobility briefing
       Duration: 45 minutes
+      Location: City Hall - Conference Room B
       Availability: Tuesday afternoon is preferred.
       Participants: Rafael Kim <rafael.step6@example.org> (optional)
       Candidate: 2026-09-08, 2:00-2:45 PM MT

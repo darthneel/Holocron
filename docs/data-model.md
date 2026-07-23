@@ -73,6 +73,7 @@ erDiagram
         text requester_organization "nullable"
         text purpose
         integer requested_duration_minutes
+        text preferred_location "nullable"
         text availability_notes "nullable"
         source_channel source_channel
         text original_request_text "nullable"
@@ -339,7 +340,9 @@ fails. Validation errors and warnings remain separate so incomplete but valid
 proposals can be reviewed. `scheduling_request_id` and `accepted_at` are both null
 until acceptance, then both are set in the scheduling-request transaction. The
 unique request link ensures one extraction cannot create multiple requests.
-`scheduling_requests.briefing_context` preserves the reviewed v2 intake structure:
+`scheduling_requests.preferred_location` keeps the reviewed meeting location separate
+from availability and candidate-window context. `scheduling_requests.briefing_context`
+preserves the reviewed v2 intake structure:
 agenda items and their evidence excerpts, explicit asks and decisions, owners and
 decision-makers, deadlines, readiness standards, dependencies, constraints,
 promised deliverables, and unresolved questions. It is stored as application-

@@ -32,6 +32,7 @@ module Holocron
           organization = clean(headers["organization"])
           purpose = clean(headers["subject"]) || first_body_line(input)
           duration = parse_duration(headers["duration"] || input)
+          preferred_location = clean(headers["location"] || headers["meeting location"])
           availability = clean(headers["availability"])
           participants = parse_participants(headers["participants"])
           candidate_windows = parse_candidates(input)
@@ -49,6 +50,7 @@ module Holocron
               },
               "purpose" => purpose,
               "requested_duration_minutes" => duration,
+              "preferred_location" => preferred_location,
               "availability_notes" => availability,
               "participants" => participants,
               "candidate_windows" => candidate_windows,
