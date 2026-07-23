@@ -33,6 +33,7 @@ import { HolocronMark } from "./holocron-mark";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9292";
 const OFFICE_TIME_ZONE = "America/Denver";
+const CALENDAR_DAY_COUNT = 7;
 
 type Session = {
   email: string;
@@ -1796,7 +1797,7 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
   const [completedTasks, setCompletedTasks] = useState<Record<string, boolean>>({});
   const todayRef = useRef(initialToday);
   const followsTodayRef = useRef(true);
-  const visibleDays = [calendarStart, addCalendarDays(calendarStart, 1), addCalendarDays(calendarStart, 2)];
+  const visibleDays = Array.from({length: CALENDAR_DAY_COUNT}, (_, index) => addCalendarDays(calendarStart, index));
   const calendarTimezone = calendar?.timezone ?? timezone;
   const calendarEntries = calendar?.entries ?? [];
   const firstName = userName.split(" ")[0] || userName;
@@ -1841,7 +1842,7 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
 
   useEffect(() => {
     const controller = new AbortController();
-    const endDate = addCalendarDays(calendarStart, 2);
+    const endDate = addCalendarDays(calendarStart, CALENDAR_DAY_COUNT - 1);
 
     void fetch(`${API_URL}/api/calendar?start_date=${calendarStart}&end_date=${endDate}`, {signal: controller.signal})
       .then(async (response) => {
@@ -1866,7 +1867,7 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
   }, [calendarStart, refreshKey]);
 
   function shiftCalendar(direction: "previous" | "next") {
-    const delta = direction === "next" ? 1 : -1;
+    const delta = direction === "next" ? CALENDAR_DAY_COUNT : -CALENDAR_DAY_COUNT;
     followsTodayRef.current = false;
     setCalendarDirection(direction);
     setIsCalendarLoading(true);
@@ -1916,16 +1917,16 @@ function FoundationDashboard({userName, principalName, timezone, refreshKey, onO
               </div>
               <div className="foundation-calendar-actions" aria-label="Calendar navigation">
                 <div>
-                  <strong>{calendarDayLabel(visibleDays[0]).month} {calendarDayLabel(visibleDays[0]).date} to {calendarDayLabel(visibleDays[2]).month} {calendarDayLabel(visibleDays[2]).date}</strong>
-                  <span>Three-day desk view</span>
+                  <strong>{calendarDayLabel(visibleDays[0]).month} {calendarDayLabel(visibleDays[0]).date} to {calendarDayLabel(visibleDays[visibleDays.length - 1]).month} {calendarDayLabel(visibleDays[visibleDays.length - 1]).date}</strong>
+                  <span>Seven-day desk view</span>
                 </div>
                 <button className={`foundation-calendar-today ${calendarStart === today ? "is-current" : ""}`} type="button" onClick={returnCalendarToToday} aria-pressed={calendarStart === today}>
                   TODAY
                 </button>
-                <button type="button" onClick={() => shiftCalendar("previous")} aria-label="Show previous three days">
+                <button type="button" onClick={() => shiftCalendar("previous")} aria-label="Show previous seven days">
                   <ChevronLeft aria-hidden="true" />
                 </button>
-                <button type="button" onClick={() => shiftCalendar("next")} aria-label="Show next three days">
+                <button type="button" onClick={() => shiftCalendar("next")} aria-label="Show next seven days">
                   <ChevronRight aria-hidden="true" />
                 </button>
               </div>
