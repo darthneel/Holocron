@@ -873,7 +873,7 @@ export default function Home() {
         if (cancelled) return;
 
         briefingDetailCache.current.set(briefingId!, {detail, full: false});
-        if (selectedBriefingId.current === briefingId) setSelectedBriefing(detail);
+        setSelectedBriefing((current) => current?.id === briefingId ? detail : current);
         setBriefings((current) => current.map((briefing) => (
           briefing.id === briefingId
             ? {
