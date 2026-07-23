@@ -81,6 +81,7 @@ type MeetingsView = "requests" | "briefings";
 type LoadingView = WorkspaceView | "meeting-briefings";
 type WorkspaceTheme = "dark" | "light";
 type LoadingItem = { kind: "request" | "briefing"; id: string } | null;
+type RequestStatusFilter = "all" | "proposed" | "scheduled";
 
 type FoundationCalendarEntry = {
   id: string;
@@ -494,6 +495,12 @@ const statusLabels: Record<string, string> = {
   scheduled: "Scheduled",
 };
 
+const requestStatusFilters: Array<{value: RequestStatusFilter; label: string}> = [
+  {value: "all", label: "All"},
+  {value: "proposed", label: statusLabels.proposed},
+  {value: "scheduled", label: statusLabels.scheduled},
+];
+
 const briefingStatusLabels: Record<string, string> = {
   draft: "Draft",
   in_review: "In review",
@@ -777,6 +784,7 @@ export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [foundation, setFoundation] = useState<Foundation | null>(null);
   const [requests, setRequests] = useState<RequestListItem[]>([]);
+  const [requestStatusFilter, setRequestStatusFilter] = useState<RequestStatusFilter>("all");
   const [relationships, setRelationships] = useState<RelationshipsOverview | null>(null);
   const [briefings, setBriefings] = useState<BriefingListItem[]>([]);
   const [briefingsLoaded, setBriefingsLoaded] = useState(false);
@@ -817,6 +825,9 @@ export default function Home() {
   const schedulerMembers = foundation?.members.filter(
     (member) => member.status === "active" && ["owner", "chief_of_staff", "scheduler"].includes(member.role),
   ) ?? [];
+  const filteredRequests = requestStatusFilter === "all"
+    ? requests
+    : requests.filter((request) => request.status === requestStatusFilter);
 
   async function responseBody(response: Response, fallback: string) {
     const body = await response.json();
@@ -1557,8 +1568,19 @@ export default function Home() {
 
             <div className="request-workbench">
               <div className="request-inbox" aria-label="Scheduling request inbox">
-                <div className="request-inbox-head"><span>{requests.length} {requests.length === 1 ? "request" : "requests"}</span></div>
-                {requests.length === 0 ? <div className="empty-inbox"><Inbox aria-hidden="true" /><strong>No scheduling requests yet</strong><span>New requests will appear here.</span></div> : requests.map((request) => (
+                <div className="request-inbox-head">
+                  <span>{filteredRequests.length} {filteredRequests.length === 1 ? "request" : "requests"}</span>
+                  <div className="request-status-filters" role="group" aria-label="Filter requests by status">
+                    {requestStatusFilters.map(({value, label}) => {
+                      const count = value === "all" ? requests.length : requests.filter((request) => request.status === value).length;
+                      const isActive = requestStatusFilter === value;
+                      return <button className={`request-filter-chip ${isActive ? "is-active" : ""}`} type="button" key={value} onClick={() => setRequestStatusFilter(value)} aria-pressed={isActive}>
+                        <span>{label}</span><small>{count}</small>
+                      </button>;
+                    })}
+                  </div>
+                </div>
+                {requests.length === 0 ? <div className="empty-inbox"><Inbox aria-hidden="true" /><strong>No scheduling requests yet</strong><span>New requests will appear here.</span></div> : filteredRequests.length === 0 ? <div className="empty-inbox"><Inbox aria-hidden="true" /><strong>No matching requests</strong><span>Try another status filter.</span></div> : filteredRequests.map((request) => (
                   <button className={`request-row ${selectedRequest?.id === request.id && mode === "inbox" ? "is-selected" : ""} ${loadingItem?.kind === "request" && loadingItem.id === request.id ? "is-loading" : ""}`} type="button" key={request.id} onClick={() => void selectRequest(request.id)} onPointerEnter={() => scheduleRequestPrefetch(request.id)} onPointerLeave={cancelRequestPrefetch} onFocus={() => scheduleRequestPrefetch(request.id)} onBlur={cancelRequestPrefetch} aria-busy={loadingItem?.kind === "request" && loadingItem.id === request.id}>
                     <span className="request-source">{sourceLabels[request.source_channel]}</span>
                     <span className={`request-status request-status-${request.status}`}>{formatStatus(request.status)}</span>

@@ -5375,11 +5375,53 @@ a:focus-visible {
 .request-inbox-head {
   min-height: 42px;
   padding: 13px 15px;
+  display: grid;
+  align-content: center;
+  gap: 10px;
   border-bottom: 1px solid var(--line-strong);
   color: var(--ink-soft);
   font: 9px var(--font-geist-mono), monospace;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.request-status-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.request-filter-chip {
+  min-height: 25px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: 650 8px var(--font-geist-mono), monospace;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.request-filter-chip small {
+  color: inherit;
+  font: inherit;
+}
+
+.request-filter-chip:hover {
+  border-color: var(--peach);
+  color: var(--peach);
+}
+
+.request-filter-chip.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--peach);
 }
 
 .request-row {
