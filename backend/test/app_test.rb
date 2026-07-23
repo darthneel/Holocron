@@ -724,6 +724,7 @@ class HolocronAppTest < Minitest::Test
     assert manifest.all? { |source| source.fetch("excerpt").length <= Holocron::AskAI::MAX_EXCERPT_LENGTH }
     assert_equal Holocron::AskAI::MAX_SOURCES, semantic_index.arguments.fetch(:limit)
     assert_equal true, semantic_index.arguments.fetch(:fused)
+    assert_equal false, semantic_index.arguments.fetch(:refresh)
     assert_equal chamber_people.map { |person| person.fetch(:id) }.sort,
       semantic_index.arguments.fetch(:balanced_person_ids).sort
   end
@@ -858,16 +859,27 @@ class HolocronAppTest < Minitest::Test
       created_at: now,
       updated_at: now
     )
+    semantic_index = Holocron::SemanticIndex.new(workspace: workspace)
+    semantic_index.refresh_interactions!
+    index_before_ask = db[:semantic_documents]
+      .where(workspace_id: workspace[:id], source_type: "interaction")
+      .order(:id)
+      .all
 
     result = Holocron::AskAI.answer(
       question: "What did Ask AI Integration Person decide about Orion Beacon?",
-      workspace: workspace
+      workspace: workspace,
+      semantic_index: semantic_index
     )
 
     assert_equal "succeeded", result.status
     assert_equal ["interaction:#{interaction_id}"], result.claims.first.fetch(:source_refs)
     assert_equal interaction_id, result.sources.first.fetch("source_id")
     assert_match(/Orion Beacon/, result.answer)
+    assert_equal index_before_ask, db[:semantic_documents]
+      .where(workspace_id: workspace[:id], source_type: "interaction")
+      .order(:id)
+      .all
   end
 
   def test_ask_endpoint_rejects_invalid_json_and_non_object_bodies
