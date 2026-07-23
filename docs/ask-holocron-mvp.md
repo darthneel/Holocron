@@ -174,6 +174,10 @@ disambiguation. Unknown, off-topic, and cross-workspace-only evidence returns a
 deterministic limitation without invoking the model. Only sources cited by the
 validated generated claims are returned.
 
+Ask queries never refresh or mutate the semantic index. Interaction indexing is a
+separate backfill/write-path concern; Ask searches the index exactly as it exists
+when the question arrives.
+
 Gate:
 
 - Every factual claim has a valid retrieved source.

@@ -33,9 +33,10 @@ module Holocron
       balanced_person_ids: [],
       per_person_limit: 2,
       max_per_person: nil,
-      fused: false
+      fused: false,
+      refresh: true
     )
-      refresh = refresh_interactions!
+      refresh_result = refresh ? refresh_interactions! : existing_index_statistics
       query_embedding = AI::Embeddings.embed([query], provider: @embedding_provider)
       model = query_embedding.model
       vector = vector_literal(query_embedding.vectors.first)
@@ -119,13 +120,13 @@ module Holocron
 
       {
         interactions: selected,
-        indexed_records: refresh[:indexed_records],
-        indexed_interactions: refresh[:indexed_interactions],
-        overview_records: refresh[:overview_records],
-        burst_records: refresh[:burst_records],
-        refreshed_records: refresh[:refreshed_records],
-        removed_records: refresh[:removed_records],
-        indexing_tokens: refresh[:embedding_tokens],
+        indexed_records: refresh_result[:indexed_records],
+        indexed_interactions: refresh_result[:indexed_interactions],
+        overview_records: refresh_result[:overview_records],
+        burst_records: refresh_result[:burst_records],
+        refreshed_records: refresh_result[:refreshed_records],
+        removed_records: refresh_result[:removed_records],
+        indexing_tokens: refresh_result[:embedding_tokens],
         query_tokens: query_embedding.input_tokens,
         embedding_provider: query_embedding.provider,
         embedding_model: model,
@@ -208,6 +209,22 @@ module Holocron
         refreshed_records: stale.length,
         removed_records: removed_records,
         embedding_tokens: embedding_tokens
+      }
+    end
+
+    def existing_index_statistics
+      records = @db[:semantic_documents]
+        .where(workspace_id: workspace_id, source_type: "interaction")
+        .select(:source_id, :unit_type)
+        .all
+      {
+        indexed_records: records.length,
+        indexed_interactions: records.map { |record| record[:source_id] }.uniq.length,
+        overview_records: records.count { |record| record[:unit_type] == "overview" },
+        burst_records: records.count { |record| record[:unit_type] == "burst" },
+        refreshed_records: 0,
+        removed_records: 0,
+        embedding_tokens: 0
       }
     end
 

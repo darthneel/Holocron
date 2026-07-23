@@ -55,7 +55,8 @@ module Holocron
         balanced_person_ids: resolution.fetch(:balanced_person_ids),
         per_person_limit: 2,
         max_per_person: resolution.fetch(:balanced_person_ids).any? ? 3 : nil,
-        fused: true
+        fused: true,
+        refresh: false
       )
       interactions = qualifying_interactions(
         retrieval.fetch(:interactions),
