@@ -160,7 +160,7 @@ module Holocron
 
           r.on String do |id|
             r.post "generate" do
-              briefing_command(r, workspace, :generate_version, identifier: id)
+              briefing_command(r, workspace, :generate_requested_version, identifier: id)
             end
 
             r.post "versions" do

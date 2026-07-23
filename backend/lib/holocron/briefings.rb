@@ -313,6 +313,22 @@ module Holocron
       fetch(id: id, workspace: workspace)
     end
 
+    def generate_requested_version(id:, attributes:, workspace:, actor:)
+      expected = expected_lock_version(attributes)
+      db = Database.db
+      briefing = db[:briefings].where(id: id, workspace_id: workspace[:id]).first
+      return nil unless briefing
+
+      verify_lock!(briefing, expected)
+      ensure_editable!(briefing)
+      # Older deployed clients still call /generate immediately after scheduling.
+      # Scheduling already enqueues that initial generation, so running it here
+      # would put the AI request back on the click path (and can duplicate work).
+      return fetch(id: id, workspace: workspace) if %w[pending running].include?(briefing[:generation_status])
+
+      generate_version(id: id, attributes: attributes, workspace: workspace, actor: actor)
+    end
+
     def generate_version(id:, attributes:, workspace:, actor:, router: nil)
       expected = expected_lock_version(attributes)
       strategy = optional_text(attributes["retrieval_strategy"], limit: 40) || "linked_recency"
@@ -325,11 +341,6 @@ module Holocron
 
       verify_lock!(briefing, expected)
       ensure_editable!(briefing)
-      # Older deployed clients still call /generate immediately after scheduling.
-      # Scheduling already enqueues that initial generation, so running it here
-      # would put the AI request back on the click path (and can duplicate work).
-      return fetch(id: id, workspace: workspace) if %w[pending running].include?(briefing[:generation_status])
-
       manifest = BriefingContextAssembler.new(workspace: workspace, strategy: strategy).call(briefing: briefing)
       outcome = BriefingGeneration.generate(manifest: manifest, router: router)
       unless outcome.status == "succeeded"
