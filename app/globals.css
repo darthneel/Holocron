@@ -5329,6 +5329,18 @@ a:focus-visible {
   color: var(--cool-strong);
 }
 
+.briefing-status-generating {
+  border-color: #526b76;
+  background: var(--cool-soft);
+  color: var(--cool-strong);
+}
+
+.briefing-status-generation-failed {
+  border-color: #80534d;
+  background: #382522;
+  color: var(--danger);
+}
+
 .briefing-status-changes_requested {
   border-color: #80534d;
   background: #382522;
@@ -5352,6 +5364,106 @@ a:focus-visible {
   border-color: #c9ae7c;
   background: #f6eddb;
   color: #80551f;
+}
+
+.theme-light .briefing-status-generating {
+  border-color: #839ba6;
+  background: #e5eef1;
+  color: #315968;
+}
+
+.theme-light .briefing-status-generation-failed {
+  border-color: #c79b94;
+  background: #f6e7e4;
+  color: #8b3f35;
+}
+
+.briefing-generation-state {
+  min-height: 610px;
+}
+
+.briefing-generation-message {
+  margin-top: 30px;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.briefing-generation-message > svg {
+  width: 22px;
+  height: 22px;
+  color: var(--cool-strong);
+}
+
+.briefing-generation-message > div {
+  display: grid;
+  gap: 6px;
+}
+
+.briefing-generation-message strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.briefing-generation-message p {
+  max-width: 620px;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.briefing-generation-message.is-failed > svg {
+  color: var(--danger);
+}
+
+.briefing-generation-skeleton {
+  margin-top: 34px;
+  display: grid;
+  gap: 26px;
+}
+
+.briefing-generation-skeleton > div {
+  padding-bottom: 26px;
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.briefing-generation-skeleton span {
+  display: block;
+  height: 11px;
+  background: var(--surface);
+  animation: briefing-skeleton-pulse 1.2s ease-in-out infinite alternate;
+}
+
+.briefing-generation-skeleton span:first-child {
+  width: 34%;
+  height: 15px;
+}
+
+.briefing-generation-skeleton span:nth-child(2) {
+  width: 92%;
+}
+
+.briefing-generation-skeleton span:nth-child(3) {
+  width: 76%;
+}
+
+.briefing-generation-skeleton span:nth-child(4) {
+  width: 58%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes briefing-skeleton-pulse {
+    from { opacity: 0.45; }
+    to { opacity: 0.92; }
+  }
 }
 
 /* Signal Room request specification copied from the gallery implementation. */

@@ -5,6 +5,7 @@ require "securerandom"
 require "time"
 require_relative "briefing_context_assembler"
 require_relative "briefing_generation"
+require_relative "briefing_generation_jobs"
 require_relative "database"
 require_relative "relationships"
 require_relative "tasks"
@@ -103,6 +104,10 @@ module Holocron
         .group(:briefing_version_id)
         .select(:briefing_version_id, Sequel.function(:count, Sequel.lit("*")).as(:count))
         .to_hash(:briefing_version_id, :count)
+      generation_jobs = db[:briefing_generation_jobs]
+        .where(briefing_id: briefings.map { |briefing| briefing[:id] })
+        .all
+        .to_h { |job| [job[:briefing_id], job] }
 
       briefings.map do |briefing|
         meeting = meetings.fetch(briefing[:meeting_id])
@@ -112,7 +117,8 @@ module Holocron
           briefing,
           meeting: meeting,
           request: request,
-          section_count: section_counts.fetch(version[:id], 0)
+          section_count: section_counts.fetch(version[:id], 0),
+          generation_job: generation_jobs[briefing[:id]]
         )
       end
     end
@@ -242,6 +248,12 @@ module Holocron
           payload: {meeting_id: meeting_id, version_id: version_id, version_number: 1},
           correlation_id: correlation_id,
           occurred_at: now
+        )
+        BriefingGenerationJobs.enqueue!(
+          workspace_id: workspace[:id],
+          briefing_id: briefing_id,
+          db: db,
+          now: now
         )
       end
 
@@ -806,6 +818,7 @@ module Holocron
         .where(id: briefing[:id], lock_version: briefing[:lock_version], status: briefing[:status])
         .update(
           status: status,
+          generation_status: "ready",
           current_version_number: version_number,
           lock_version: briefing[:lock_version] + 1,
           updated_at: occurred_at
@@ -907,10 +920,12 @@ module Holocron
       value
     end
 
-    def serialize_list_item(briefing, meeting:, request:, section_count:)
+    def serialize_list_item(briefing, meeting:, request:, section_count:, generation_job:)
       {
         id: briefing[:id],
         status: briefing[:status],
+        generation_status: briefing[:generation_status],
+        generation_attempts: generation_job&.fetch(:attempts, 0).to_i,
         lock_version: briefing[:lock_version],
         current_version_number: briefing[:current_version_number],
         meeting: serialize_meeting(meeting),
@@ -926,6 +941,7 @@ module Holocron
       db = Database.db
       meeting = db[:meetings].where(id: briefing[:meeting_id]).first
       request = db[:scheduling_requests].where(id: meeting[:scheduling_request_id]).first
+      generation_job = db[:briefing_generation_jobs].where(briefing_id: briefing[:id]).first
       version_rows = db[:briefing_versions]
         .where(briefing_id: briefing[:id])
         .reverse_order(:version_number)
@@ -961,6 +977,8 @@ module Holocron
         id: briefing[:id],
         detail_level: include_history && include_source_catalog ? "full" : "current",
         status: briefing[:status],
+        generation_status: briefing[:generation_status],
+        generation_attempts: generation_job&.fetch(:attempts, 0).to_i,
         lock_version: briefing[:lock_version],
         current_version_number: briefing[:current_version_number],
         meeting: serialize_meeting(meeting),

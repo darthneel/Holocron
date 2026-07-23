@@ -292,6 +292,7 @@ type MeetingSummary = {
 type RequestBriefingSummary = {
   id: string;
   status: string;
+  generation_status: BriefingGenerationStatus;
   meeting: MeetingSummary;
   tasks: Task[];
 };
@@ -372,9 +373,13 @@ type BriefingVersionSummary = Pick<
   "id" | "version_number" | "status" | "change_summary" | "created_by" | "created_at"
 >;
 
+type BriefingGenerationStatus = "pending" | "running" | "ready" | "failed";
+
 type BriefingListItem = {
   id: string;
   status: string;
+  generation_status: BriefingGenerationStatus;
+  generation_attempts: number;
   lock_version: number;
   current_version_number: number;
   meeting: MeetingSummary;
@@ -389,6 +394,8 @@ type BriefingDetail = {
   id: string;
   detail_level: "current" | "full";
   status: string;
+  generation_status: BriefingGenerationStatus;
+  generation_attempts: number;
   lock_version: number;
   current_version_number: number;
   meeting: MeetingSummary;
@@ -506,6 +513,13 @@ const briefingStatusLabels: Record<string, string> = {
   in_review: "In review",
   approved: "Approved",
   changes_requested: "Changes requested",
+};
+
+const briefingGenerationLabels: Record<BriefingGenerationStatus, string> = {
+  pending: "Queued",
+  running: "Generating",
+  ready: "Ready",
+  failed: "Generation failed",
 };
 
 const briefingSectionLabels: Record<string, string> = {
@@ -631,6 +645,20 @@ function formatMeetingTime(startsAt: string, endsAt: string) {
   const startPeriod = start.match(/\s(AM|PM)$/)?.[1];
   const endPeriod = end.match(/\s(AM|PM)$/)?.[1];
   return `${startPeriod === endPeriod ? start.replace(/\s(AM|PM)$/, "") : start}-${end}`;
+}
+
+function formatMeetingSnapshotItem(sectionType: string, label: string, text: string) {
+  if (sectionType !== "meeting_snapshot" || label !== "When and where") return text;
+
+  const match = text.match(/^(\S+)\s+–\s+(\S+)(.*)$/);
+  if (!match) return text;
+
+  const [, startsAt, endsAt, suffix] = match;
+  const start = new Date(startsAt);
+  const end = new Date(endsAt);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return text;
+
+  return `${formatMeetingDate(startsAt)} · ${formatMeetingTime(startsAt, endsAt).replace("-", "–")}${suffix}`;
 }
 
 function formatMeetingDuration(startsAt: string, endsAt: string) {
@@ -828,6 +856,58 @@ export default function Home() {
   const filteredRequests = requestStatusFilter === "all"
     ? requests
     : requests.filter((request) => request.status === requestStatusFilter);
+
+  useEffect(() => {
+    const briefingId = selectedBriefing?.id;
+    const generationStatus = selectedBriefing?.generation_status;
+    if (!briefingId || !generationStatus || !["pending", "running"].includes(generationStatus)) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function pollBriefing() {
+      try {
+        const response = await fetch(`${API_URL}/api/briefings/${briefingId}?view=current`);
+        const detail = await response.json() as BriefingDetail & {error?: string};
+        if (!response.ok) throw new Error(detail.error ?? "Unable to refresh briefing generation.");
+        if (cancelled) return;
+
+        briefingDetailCache.current.set(briefingId!, {detail, full: false});
+        if (selectedBriefingId.current === briefingId) setSelectedBriefing(detail);
+        setBriefings((current) => current.map((briefing) => (
+          briefing.id === briefingId
+            ? {
+                ...briefing,
+                status: detail.status,
+                generation_status: detail.generation_status,
+                generation_attempts: detail.generation_attempts,
+                lock_version: detail.lock_version,
+                current_version_number: detail.current_version_number,
+                section_count: detail.versions.find(
+                  (version) => version.version_number === detail.current_version_number,
+                )?.sections.length ?? briefing.section_count,
+                updated_at: detail.updated_at,
+              }
+            : briefing
+        )));
+
+        if (detail.generation_status === "ready" || detail.generation_status === "failed") {
+          requestDetailCache.current.delete(detail.request.id);
+          return;
+        }
+      } catch {
+        if (cancelled) return;
+      }
+
+      timer = window.setTimeout(pollBriefing, 1_200);
+    }
+
+    timer = window.setTimeout(pollBriefing, 700);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [selectedBriefing?.generation_status, selectedBriefing?.id]);
 
   async function responseBody(response: Response, fallback: string) {
     const body = await response.json();
@@ -1356,19 +1436,10 @@ export default function Home() {
     setIsBriefingSaving(true);
     setError("");
     try {
-      const createdBriefing = await sendBriefingCommand(
+      await sendBriefingCommand(
         `/api/scheduling-requests/${selectedRequest.id}/meeting`,
         {...payload, expected_request_lock_version: selectedRequest.lock_version},
       );
-
-      try {
-        await sendBriefingCommand(`/api/briefings/${createdBriefing.id}/generate`, {
-          expected_lock_version: createdBriefing.lock_version,
-        });
-      } catch (generationError) {
-        const detail = generationError instanceof Error ? generationError.message : "Unable to generate the briefing.";
-        setError(`Meeting created with a fallback draft. Automatic briefing generation failed: ${detail}`);
-      }
 
       await loadRequests();
       refreshFoundationCalendar();
@@ -2008,6 +2079,10 @@ function BriefingsSection({ briefings, selectedBriefing, loadingBriefingId, canM
     viewedVersion && selectedBriefing && viewedVersion.version_number === selectedBriefing.current_version_number,
   );
   const hasGeneratedCurrentVersion = Boolean(currentVersion?.generation);
+  const generationInProgress = Boolean(
+    selectedBriefing && ["pending", "running"].includes(selectedBriefing.generation_status),
+  );
+  const generationFailed = selectedBriefing?.generation_status === "failed";
 
   async function select(id: string) {
     setMode("view");
@@ -2131,21 +2206,67 @@ function BriefingsSection({ briefings, selectedBriefing, loadingBriefingId, canM
           <div className="briefing-inbox-head"><span>{briefings.length} {briefings.length === 1 ? "briefing" : "briefings"}</span></div>
           {briefings.length === 0 ? (
             <div className="briefing-empty"><BookOpen aria-hidden="true" /><strong>No briefings yet</strong><span>Scheduled meetings will appear here.</span></div>
-          ) : briefings.map((briefing) => (
-            <button className={`briefing-row ${selectedBriefing?.id === briefing.id ? "is-selected" : ""} ${loadingBriefingId === briefing.id ? "is-loading" : ""}`} type="button" key={briefing.id} onClick={() => void select(briefing.id)} onPointerEnter={() => onPrefetch(briefing.id)} onPointerLeave={onCancelPrefetch} onFocus={() => onPrefetch(briefing.id)} onBlur={onCancelPrefetch} aria-busy={loadingBriefingId === briefing.id}>
-              <span className="briefing-source">{briefing.requester_name}</span>
-              <span className={`briefing-status briefing-status-${briefing.status}`}>{briefingStatusLabels[briefing.status]}</span>
-              <strong>{briefing.meeting.title}</strong>
-              <p>{briefing.requester_organization || "Independent requester"}</p>
-              <small>{formatMeetingDuration(briefing.meeting.starts_at, briefing.meeting.ends_at)}</small>
-              <time dateTime={briefing.meeting.starts_at}>{formatMeetingDate(briefing.meeting.starts_at)}</time>
-            </button>
-          ))}
+          ) : briefings.map((briefing) => {
+            const isGenerating = ["pending", "running"].includes(briefing.generation_status);
+            const statusClass = isGenerating ? "generating" : briefing.generation_status === "failed" ? "generation-failed" : briefing.status;
+            const statusLabel = briefing.generation_status === "ready"
+              ? briefingStatusLabels[briefing.status]
+              : briefingGenerationLabels[briefing.generation_status];
+            return (
+              <button className={`briefing-row ${selectedBriefing?.id === briefing.id ? "is-selected" : ""} ${loadingBriefingId === briefing.id ? "is-loading" : ""}`} type="button" key={briefing.id} onClick={() => void select(briefing.id)} onPointerEnter={() => onPrefetch(briefing.id)} onPointerLeave={onCancelPrefetch} onFocus={() => onPrefetch(briefing.id)} onBlur={onCancelPrefetch} aria-busy={loadingBriefingId === briefing.id || isGenerating}>
+                <span className="briefing-source">{briefing.requester_name}</span>
+                <span className={`briefing-status briefing-status-${statusClass}`}>{statusLabel}</span>
+                <strong>{briefing.meeting.title}</strong>
+                <p>{isGenerating ? "AI briefing is being assembled" : briefing.requester_organization || "Independent requester"}</p>
+                <small>{formatMeetingDuration(briefing.meeting.starts_at, briefing.meeting.ends_at)}</small>
+                <time dateTime={briefing.meeting.starts_at}>{formatMeetingDate(briefing.meeting.starts_at)}</time>
+              </button>
+            );
+          })}
         </div>
 
         <div className="briefing-panel">
           {loadingBriefingId ? <div className="detail-loading-state" role="status"><span aria-hidden="true" />Loading briefing</div> : null}
-          {!selectedBriefing || !viewedVersion ? (
+          {selectedBriefing && generationInProgress ? (
+            <article className="briefing-detail briefing-generation-state" role="status" aria-live="polite">
+              <header className="briefing-detail-head">
+                <div>
+                  <p className="eyebrow">Meeting briefing</p>
+                  <h3>{selectedBriefing.meeting.title}</h3>
+                  <span className="briefing-status briefing-status-generating">{briefingGenerationLabels[selectedBriefing.generation_status]}</span>
+                </div>
+              </header>
+              <div className="briefing-generation-message">
+                <Sparkles aria-hidden="true" />
+                <div>
+                  <strong>Creating the AI briefing</strong>
+                  <p>The meeting is scheduled. Holocron is gathering the request, attendee context, and prior history now.</p>
+                </div>
+              </div>
+              <div className="briefing-generation-skeleton" aria-hidden="true">
+                <div><span /><span /><span /></div>
+                <div><span /><span /><span /><span /></div>
+                <div><span /><span /><span /></div>
+              </div>
+            </article>
+          ) : selectedBriefing && generationFailed ? (
+            <article className="briefing-detail briefing-generation-state" role="status">
+              <header className="briefing-detail-head">
+                <div>
+                  <p className="eyebrow">Meeting briefing</p>
+                  <h3>{selectedBriefing.meeting.title}</h3>
+                  <span className="briefing-status briefing-status-generation-failed">{briefingGenerationLabels.failed}</span>
+                </div>
+              </header>
+              <div className="briefing-generation-message is-failed">
+                <XCircle aria-hidden="true" />
+                <div>
+                  <strong>The AI briefing could not be completed</strong>
+                  <p>The meeting is still scheduled. Automatic generation stopped after {selectedBriefing.generation_attempts} attempts.</p>
+                </div>
+              </div>
+            </article>
+          ) : !selectedBriefing || !viewedVersion ? (
             <div className="briefing-empty-panel"><BookOpen aria-hidden="true" /><h3>Select a briefing</h3><p>Meeting preparation and approved versions appear here.</p></div>
           ) : (
             <article className="briefing-detail">
@@ -2217,7 +2338,7 @@ function BriefingsSection({ briefings, selectedBriefing, loadingBriefingId, canM
                       const bodyIsList = Boolean(section.body) && (section.section_type === "objectives" || isBriefingList(section.body));
                       return <section className="briefing-content-section" key={section.id}>
                         <div><span>{briefingSectionLabels[section.section_type]}</span><h4>{section.title}</h4></div>
-                        {section.items.length > 0 ? <ul className="content-list">{section.items.map((item, itemIndex) => <li key={`${section.id}-item-${itemIndex}`}><p>{item.label ? <strong>{item.label}</strong> : null}{item.text}</p></li>)}</ul> : section.body ? bodyIsList ? <ul className="content-list">{briefingListItems(section.body).map((item, index) => <li key={`${section.id}-item-${index}`}>{item}</li>)}</ul> : <p>{section.body}</p> : <p className="muted-value">{emptyBriefingSectionText(section.section_type)}</p>}
+                        {section.items.length > 0 ? <ul className="content-list">{section.items.map((item, itemIndex) => <li key={`${section.id}-item-${itemIndex}`}><p>{item.label ? <strong>{item.label}</strong> : null}{formatMeetingSnapshotItem(section.section_type, item.label, item.text)}</p></li>)}</ul> : section.body ? bodyIsList ? <ul className="content-list">{briefingListItems(section.body).map((item, index) => <li key={`${section.id}-item-${index}`}>{item}</li>)}</ul> : <p>{section.body}</p> : <p className="muted-value">{emptyBriefingSectionText(section.section_type)}</p>}
                         {sectionSources.length > 0 ? <div className="briefing-source-disclosure">
                           <button
                             className="briefing-sources-toggle"
@@ -2479,6 +2600,7 @@ function RequestDetail({ request, briefing, canMutate, isBriefingSaving, onEdit,
   onOpenBriefing: (id: string) => void;
 }) {
   const [expandedPersonHistory, setExpandedPersonHistory] = useState<Record<string, boolean>>({});
+  const briefingIsGenerating = Boolean(briefing && ["pending", "running"].includes(briefing.generation_status));
   const suggestedWindows = request.candidate_windows.filter((window) => window.starts_at && window.ends_at);
   const preferredWindow = suggestedWindows[0];
   const [timeSelection, setTimeSelection] = useState(preferredWindow?.id ?? "custom");
@@ -2600,11 +2722,11 @@ function RequestDetail({ request, briefing, canMutate, isBriefingSaving, onEdit,
         </section>
       ) : request.status === "scheduled" ? (
         <section className="meeting-briefing-block">
-          <div className="meeting-briefing-heading"><div><p className="eyebrow">Meeting preparation</p><h3>Meeting and briefing</h3></div>{briefing ? <span className={`briefing-status briefing-status-${briefing.status}`}>{briefingStatusLabels[briefing.status]}</span> : null}</div>
+          <div className="meeting-briefing-heading"><div><p className="eyebrow">Meeting preparation</p><h3>Meeting and briefing</h3></div>{briefing ? <span className={`briefing-status briefing-status-${briefingIsGenerating ? "generating" : briefing.generation_status === "failed" ? "generation-failed" : briefing.status}`}>{briefing.generation_status === "ready" ? briefingStatusLabels[briefing.status] : briefingGenerationLabels[briefing.generation_status]}</span> : null}</div>
           {briefing ? (
             <>
               <div className="meeting-briefing-summary">
-                <div><CalendarCheck aria-hidden="true" /><span><strong>{briefing.meeting.title}</strong><small>{formatDateTime(briefing.meeting.starts_at)} · {briefing.meeting.location || "Location not specified"}</small></span></div>
+                <div><CalendarCheck aria-hidden="true" /><span><strong>{briefing.meeting.title}</strong><small>{briefingIsGenerating ? "Meeting scheduled · AI briefing in progress" : `${formatDateTime(briefing.meeting.starts_at)} · ${briefing.meeting.location || "Location not specified"}`}</small></span></div>
                 <button className="primary-command" type="button" onClick={() => onOpenBriefing(briefing.id)}><BookOpen aria-hidden="true" /><span>Open briefing</span></button>
               </div>
               {briefing.tasks.map((task) => <div className="meeting-preparation-task" key={task.id}><ListTodo aria-hidden="true" /><span><small>Preparation task · {formatRelationshipType(task.status)}</small><strong>{task.title}</strong><small>{task.assignee?.display_name || "Unassigned"}{task.due_at ? ` · Due ${formatDateTime(task.due_at)}` : ""}</small></span></div>)}

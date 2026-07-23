@@ -281,6 +281,7 @@ module Holocron
         briefing: briefing && {
           id: briefing[:id],
           status: briefing[:status],
+          generation_status: briefing[:generation_status],
           tasks: Tasks.for_meeting(meeting_id: meeting[:id], workspace: {id: request[:workspace_id]}),
           meeting: {
             id: meeting[:id],

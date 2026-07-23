@@ -1293,7 +1293,35 @@ class HolocronAppTest < Minitest::Test
     assert_equal 2, request[:lock_version]
     assert_equal 1, Holocron::Database.db[:meetings].where(scheduling_request_id: request_id).count
     assert_equal 1, Holocron::Database.db[:briefings].where(id: briefing.fetch("id")).count
+    assert_equal "pending", briefing.fetch("generation_status")
+    assert_equal "pending", Holocron::Database.db[:briefing_generation_jobs].where(briefing_id: briefing.fetch("id")).get(:status)
     assert_operator Holocron::Database.db[:audit_events].count, :>=, initial_audit_count + 3
+  end
+
+  def test_briefing_generation_job_populates_the_scheduled_briefing
+    proposed = create_scheduling_request(isolated_request_overrides("async-briefing"))
+
+    post_json "/api/scheduling-requests/#{proposed.fetch("id")}/meeting", meeting_payload, actor_headers
+
+    assert_equal 201, last_response.status
+    briefing = parsed_response
+    db = Holocron::Database.db
+    assert_equal "pending", briefing.fetch("generation_status")
+    assert_equal 1, db[:briefing_versions].where(briefing_id: briefing.fetch("id")).count
+
+    assert Holocron::BriefingGenerationJobs.run_once(
+      worker_id: "test-briefing-generator",
+      briefing_id: briefing.fetch("id")
+    )
+
+    generated = Holocron::Briefings.fetch(
+      id: briefing.fetch("id"),
+      workspace: db[:workspaces].where(slug: "cedar-grove-mayor").first
+    )
+    assert_equal "ready", generated.fetch(:generation_status)
+    assert_equal 2, generated.fetch(:current_version_number)
+    assert generated.fetch(:versions).first.fetch(:generation)
+    assert_equal "completed", db[:briefing_generation_jobs].where(briefing_id: briefing.fetch("id")).get(:status)
   end
 
   def test_stale_schedule_is_rejected_without_partial_writes
@@ -1359,6 +1387,7 @@ class HolocronAppTest < Minitest::Test
     assert_equal 201, last_response.status
     briefing = parsed_response
     assert_equal "draft", briefing.fetch("status")
+    assert_equal "pending", briefing.fetch("generation_status")
     assert_equal 1, briefing.fetch("lock_version")
     assert_equal 1, briefing.fetch("current_version_number")
     assert_equal proposed.fetch("id"), briefing.dig("meeting", "scheduling_request_id")
