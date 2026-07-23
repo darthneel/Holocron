@@ -6366,6 +6366,7 @@ a:focus-visible {
 
 .foundation-calendar-card {
   min-width: 0;
+  overflow: hidden;
 }
 
 .foundation-calendar-card-head,
@@ -6474,9 +6475,10 @@ a:focus-visible {
 }
 
 .foundation-calendar-frame {
-  min-width: 650px;
+  width: max-content;
+  min-width: 100%;
   display: grid;
-  grid-template-columns: 56px repeat(3, minmax(190px, 1fr));
+  grid-template-columns: 56px repeat(7, minmax(120px, 1fr));
   grid-template-rows: 68px 520px;
   background: var(--surface-raised);
 }
@@ -6546,6 +6548,14 @@ a:focus-visible {
 
 .foundation-time-axis span {
   transform: translateY(-5px);
+}
+
+.foundation-time-axis span:first-child {
+  transform: translateY(3px);
+}
+
+.foundation-time-axis span:last-child {
+  transform: translateY(-11px);
 }
 
 .foundation-day-lane {
@@ -6810,7 +6820,7 @@ a:focus-visible {
   to { opacity: 1; transform: translateX(0); }
 }
 
-@media (max-width: 1050px) {
+@media (max-width: 1320px) {
   .foundation-dashboard-grid {
     grid-template-columns: 1fr;
   }
