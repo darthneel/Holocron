@@ -6,7 +6,6 @@ require "time"
 require "date"
 require_relative "../lib/holocron/database"
 require_relative "../lib/holocron/briefings"
-require_relative "../lib/holocron/scheduling_request_workflow"
 
 db = Holocron::Database.db
 
@@ -292,37 +291,19 @@ if db.table_exists?(:briefings)
     .first
 
   if workspace && actor && request && !meeting && window
-    transitions = {
-      "submitted" => ["under_review", "review_started"],
-      "under_review" => ["approved", "ready_to_schedule"],
-      "approved" => ["scheduled", "time_confirmed"]
-    }
-    while (transition = transitions[request[:status]])
-      Holocron::SchedulingRequestWorkflow.transition(
-        id: request[:id],
-        attributes: {
-          "to_status" => transition[0],
-          "reason_code" => transition[1],
-          "expected_lock_version" => request[:lock_version]
-        },
-        workspace: workspace,
-        actor: actor
-      )
-      request = db[:scheduling_requests].where(id: request[:id]).first
-    end
-
     candidate_date = Date.iso8601(window[:candidate_date])
     starts_at = window[:starts_at] || Time.new(candidate_date.year, candidate_date.month, candidate_date.day, 10, 0, 0, "-06:00")
     ends_at = window[:ends_at] || starts_at + (request[:requested_duration_minutes] * 60)
 
-    if request[:status] == "scheduled"
+    if request[:status] == "proposed"
       Holocron::Briefings.create_for_request(
         request_id: request[:id],
         attributes: {
           "title" => request[:purpose],
           "starts_at" => starts_at.iso8601,
           "ends_at" => ends_at.iso8601,
-          "location" => "Cedar Grove City Hall - Conference Room A"
+          "location" => "Cedar Grove City Hall - Conference Room A",
+          "expected_request_lock_version" => request[:lock_version]
         },
         workspace: workspace,
         actor: actor

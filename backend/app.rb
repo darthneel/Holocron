@@ -11,7 +11,6 @@ require_relative "lib/holocron/calendar"
 require_relative "lib/holocron/relationships"
 require_relative "lib/holocron/request_extractions"
 require_relative "lib/holocron/scheduling_requests"
-require_relative "lib/holocron/scheduling_request_workflow"
 require_relative "lib/holocron/tasks"
 
 module Holocron
@@ -337,48 +336,6 @@ module Holocron
               )
             end
 
-            r.post "transitions" do
-              begin
-                body = parse_json_body(r)
-                unless body.is_a?(Hash)
-                  response.status = 400
-                  next({error: "Request body must be a JSON object."})
-                end
-
-                actor = actor_or_error(r, workspace)
-                next actor if actor.key?(:error)
-
-                result = SchedulingRequestWorkflow.transition(
-                  id: id,
-                  attributes: body,
-                  workspace: workspace,
-                  actor: actor
-                )
-                unless result
-                  response.status = 404
-                  next({error: "Scheduling request not found."})
-                end
-
-                SchedulingRequests.fetch(id: id, workspace: workspace)
-              rescue JSON::ParserError
-                response.status = 400
-                {error: "Request body must be valid JSON."}
-              rescue SchedulingRequestWorkflow::ValidationError => error
-                response.status = 422
-                {error: error.message, fields: error.fields}
-              rescue SchedulingRequestWorkflow::InvalidTransitionError => error
-                response.status = 409
-                {
-                  error: error.message,
-                  current_status: error.current_status,
-                  requested_status: error.requested_status
-                }
-              rescue SchedulingRequestWorkflow::ConflictError => error
-                response.status = 409
-                conflict_payload(error)
-              end
-            end
-
             r.get true do
               request = SchedulingRequests.fetch(id: id, workspace: workspace)
               unless request
@@ -419,7 +376,7 @@ module Holocron
               rescue Relationships::ValidationError => error
                 response.status = 422
                 {error: error.message, fields: error.fields}
-              rescue SchedulingRequestWorkflow::ConflictError => error
+              rescue SchedulingRequests::ConflictError => error
                 response.status = 409
                 conflict_payload(error)
               end
@@ -651,6 +608,13 @@ module Holocron
     rescue Briefings::StateError => error
       response.status = 409
       {error: error.message, current_status: error.current_status}
+    rescue Briefings::ScheduleConflictError => error
+      response.status = 409
+      {
+        error: error.message,
+        current_lock_version: error.current_lock_version,
+        current_status: error.current_status
+      }
     rescue Briefings::GenerationError => error
       response.status = 502
       {

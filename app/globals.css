@@ -1032,34 +1032,10 @@ a:focus-visible {
   white-space: nowrap;
 }
 
-.request-status-submitted {
+.request-status-proposed {
   border-color: #526b76;
   background: var(--cool-soft);
   color: var(--cool-strong);
-}
-
-.request-status-needs_information {
-  border-color: #6f5b4c;
-  background: var(--peach-soft);
-  color: var(--peach);
-}
-
-.request-status-under_review {
-  border-color: #66635d;
-  background: #333431;
-  color: var(--mineral);
-}
-
-.request-status-approved {
-  border-color: #47705a;
-  background: #22372b;
-  color: #9bd4af;
-}
-
-.request-status-declined {
-  border-color: #80534d;
-  background: #382522;
-  color: var(--danger);
 }
 
 .request-status-scheduled {
@@ -1208,6 +1184,14 @@ a:focus-visible {
 
 .meeting-create-form {
   margin-top: 16px;
+}
+
+.meeting-schedule-intro {
+  max-width: 62ch;
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .meeting-time-options {
@@ -2540,91 +2524,9 @@ a:focus-visible {
   font-size: 12px;
 }
 
-.workflow-actions {
-  margin-top: 24px;
-  padding: 18px 0;
-  border-top: 1px solid var(--line-strong);
-  border-bottom: 1px solid var(--line-strong);
-}
-
-.workflow-actions > h3 {
-  margin: 0 0 12px;
-  color: var(--peach);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 10px;
-  font-weight: 500;
-  text-transform: uppercase;
-}
-
-.workflow-action-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.workflow-action {
-  min-height: 34px;
-  padding: 0 10px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--ink);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.workflow-action:hover:not(:disabled),
-.workflow-action.is-selected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--peach);
-}
-
-.workflow-action-declined:hover:not(:disabled),
-.workflow-action-declined.is-selected {
-  border-color: var(--danger);
-  background: #382522;
-  color: var(--danger);
-}
-
-.workflow-action:disabled {
-  cursor: wait;
-  opacity: 0.55;
-}
-
-.workflow-action svg,
 .primary-command svg {
   width: 15px;
   height: 15px;
-}
-
-.transition-form {
-  margin-top: 14px;
-  padding: 14px;
-  border-left: 3px solid var(--accent);
-  background: var(--surface);
-}
-
-.transition-form .request-field:first-child {
-  margin-top: 0;
-}
-
-.transition-form-actions {
-  margin-top: 14px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.danger-command {
-  background: var(--danger);
-}
-
-.danger-command:hover:not(:disabled) {
-  background: #ffaaa0;
 }
 
 .detail-facts {
@@ -4159,18 +4061,6 @@ a:focus-visible {
     margin-top: 12px;
   }
 
-  .workflow-action-row {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
-  .workflow-action {
-    justify-content: flex-start;
-  }
-
-  .transition-form-actions .primary-command {
-    width: 38px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4929,7 +4819,6 @@ a:focus-visible {
   line-height: 1.5;
 }
 
-.workflow-actions > h3,
 .context-history > strong,
 .briefing-editor-toolbar > strong {
   color: var(--accent);
@@ -4960,8 +4849,7 @@ a:focus-visible {
 .primary-command,
 .icon-text-button,
 .icon-button,
-.remove-button,
-.workflow-action {
+.remove-button {
   border-radius: 3px;
 }
 
@@ -5332,13 +5220,6 @@ a:focus-visible {
   color: var(--ink);
 }
 
-.theme-light .request-status-under_review {
-  border-color: #8b9693;
-  background: #e4e9e7;
-  color: #455452;
-}
-
-.theme-light .request-status-approved,
 .theme-light .briefing-status-approved,
 .theme-light .briefing-review-approved {
   border-color: #7da58a;
@@ -5346,12 +5227,9 @@ a:focus-visible {
   color: #275c38;
 }
 
-.theme-light .request-status-declined,
 .theme-light .briefing-status-changes_requested,
 .theme-light .briefing-review-changes_requested,
-.theme-light .form-error-summary,
-.theme-light .workflow-action-declined:hover:not(:disabled),
-.theme-light .workflow-action-declined.is-selected {
+.theme-light .form-error-summary {
   border-color: #c88679;
   background: #f5dfda;
   color: #8e3025;
@@ -5363,7 +5241,6 @@ a:focus-visible {
 
 .theme-light .generation-comparison,
 .theme-light .repeat-row,
-.theme-light .transition-form,
 .theme-light .context-history,
 .theme-light .detail-block blockquote {
   box-shadow: none;
@@ -5427,34 +5304,10 @@ a:focus-visible {
   border-top: 1px solid var(--line-strong);
 }
 
-.request-status-submitted {
+.request-status-proposed {
   border-color: #526b76;
   background: var(--cool-soft);
   color: var(--cool-strong);
-}
-
-.request-status-needs_information {
-  border-color: #735b86;
-  background: #30283a;
-  color: #d4b8ef;
-}
-
-.request-status-under_review {
-  border-color: #706b61;
-  background: #32332f;
-  color: #d8e1df;
-}
-
-.request-status-approved {
-  border-color: #536f94;
-  background: #243243;
-  color: #aec8ed;
-}
-
-.request-status-declined {
-  border-color: #80534d;
-  background: #382522;
-  color: var(--danger);
 }
 
 .request-status-scheduled,
@@ -5482,22 +5335,10 @@ a:focus-visible {
   color: var(--danger);
 }
 
-.theme-light .request-status-needs_information {
-  border-color: #b7a2cf;
-  background: #eee8f6;
-  color: #60427b;
-}
-
-.theme-light .request-status-under_review {
-  border-color: #a9afa8;
-  background: #e6e8e3;
-  color: #455452;
-}
-
-.theme-light .request-status-approved {
-  border-color: #93aacb;
-  background: #e3ebf5;
-  color: #31537e;
+.theme-light .request-status-proposed {
+  border-color: #839ba6;
+  background: #e5eef1;
+  color: #315968;
 }
 
 .theme-light .request-status-scheduled,
@@ -5800,42 +5641,6 @@ a:focus-visible {
   padding: 0;
   border-top: 0;
   border-bottom: 0;
-}
-
-.workflow-actions {
-  margin-top: 22px;
-  padding: 20px;
-  border: 0;
-  background: var(--surface);
-}
-
-.workflow-actions > h3 {
-  margin: 0 0 12px;
-  color: var(--accent);
-  font: 650 9px var(--font-geist-mono), monospace;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.workflow-action-row {
-  gap: 7px;
-}
-
-.workflow-action {
-  min-height: 0;
-  padding: 9px 11px;
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.workflow-action:hover:not(:disabled),
-.workflow-action.is-selected {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--charcoal-deep);
 }
 
 .detail-facts {
@@ -6372,6 +6177,7 @@ a:focus-visible {
     padding-inline: 12px;
   }
 
+  .section-heading-actions .icon-text-button span,
   .section-heading-actions .primary-command span {
     display: inline;
   }

@@ -9,7 +9,6 @@ require "time"
 require_relative "../lib/holocron/briefings"
 require_relative "../lib/holocron/database"
 require_relative "../lib/holocron/scheduling_requests"
-require_relative "../lib/holocron/scheduling_request_workflow"
 
 module Holocron
   class ResilienceE2ESeed
@@ -236,25 +235,6 @@ module Holocron
         request = @db[:scheduling_requests].where(id: request.fetch(:id)).first
       end
 
-      transitions = {
-        "submitted" => ["under_review", "review_started"],
-        "under_review" => ["approved", "community_value"],
-        "approved" => ["scheduled", "time_confirmed"]
-      }
-      while (transition = transitions[request[:status]])
-        SchedulingRequestWorkflow.transition(
-          id: request[:id],
-          attributes: {
-            "to_status" => transition[0],
-            "reason_code" => transition[1],
-            "expected_lock_version" => request[:lock_version]
-          },
-          workspace: workspace,
-          actor: actor
-        )
-        request = @db[:scheduling_requests].where(id: request[:id]).first
-      end
-
       meeting = @db[:meetings].where(scheduling_request_id: request[:id]).first
       unless meeting
         Briefings.create_for_request(
@@ -263,7 +243,8 @@ module Holocron
             "title" => REQUEST_PURPOSE,
             "starts_at" => "2026-09-22T10:00:00-06:00",
             "ends_at" => "2026-09-22T11:00:00-06:00",
-            "location" => "Cedar Grove City Hall - Resilience Operations Room"
+            "location" => "Cedar Grove City Hall - Resilience Operations Room",
+            "expected_request_lock_version" => request[:lock_version]
           },
           workspace: workspace,
           actor: actor

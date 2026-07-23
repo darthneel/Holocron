@@ -8,14 +8,13 @@ require_relative "../lib/holocron/calendar"
 require_relative "../lib/holocron/database"
 require_relative "../lib/holocron/relationships"
 require_relative "../lib/holocron/scheduling_requests"
-require_relative "../lib/holocron/scheduling_request_workflow"
 
 module Holocron
   module DemoCalendarSeed
     WORKSPACE_SLUG = "cedar-grove-mayor"
     ACTOR_EMAIL = "neelp22@gmail.com"
     OFFICE_UTC_OFFSET = "-06:00"
-    PROPOSED_STATUSES = %w[submitted under_review approved].freeze
+    PROPOSED_STATUSES = %w[proposed].freeze
 
     module_function
 
@@ -236,33 +235,7 @@ module Holocron
         request = db[:scheduling_requests].where(id: created.fetch(:id)).first
       end
 
-      request = db[:scheduling_requests].where(id: request[:id]).first
-      advance_status(request, definition.fetch(:status), workspace: workspace, actor: actor)
       db[:scheduling_requests].where(id: request[:id]).first
-    end
-
-    def advance_status(request, target_status, workspace:, actor:)
-      transitions = {
-        "submitted" => ["under_review", "review_started", "Scheduling team confirmed the request is complete."],
-        "under_review" => ["approved", "community_value", "Approved as a high-value community meeting; time remains unconfirmed."]
-      }
-      target_rank = PROPOSED_STATUSES.index(target_status)
-      current = request
-      while (current_rank = PROPOSED_STATUSES.index(current[:status])) && current_rank < target_rank
-        to_status, reason_code, notes = transitions.fetch(current[:status])
-        SchedulingRequestWorkflow.transition(
-          id: current[:id],
-          attributes: {
-            "to_status" => to_status,
-            "reason_code" => reason_code,
-            "notes" => notes,
-            "expected_lock_version" => current[:lock_version]
-          },
-          workspace: workspace,
-          actor: actor
-        )
-        current = Database.db[:scheduling_requests].where(id: current[:id]).first
-      end
     end
 
     def local_time(date, hour, minute)
@@ -316,7 +289,7 @@ module Holocron
             {day_offset: 1, hour: 10, minute: 0, notes: "Preferred; City Hall conference room requested."},
             {day_offset: 5, hour: 14, minute: 30, notes: "Backup option; video works if the Mayor is off-site."}
           ],
-          status: "under_review",
+          status: "proposed",
           history_type: "meeting",
           history: "Nadia briefed city staff on a 186-home affordable housing pipeline and identified utility review and gap financing as the two most time-sensitive constraints.",
           briefing_context: agenda(topic: "Near-term housing pipeline", ask: "Identify two city process changes that could unblock projects this quarter.", outcome: "A short action list with named city and partner owners.", owner: "Maya Chen")
@@ -334,7 +307,7 @@ module Holocron
           source_channel: "phone",
           original_request_text: "Leila asked for 45 minutes with the Mayor to align the city's summer youth programming with the Alliance's mobile crisis and referral teams before the school year begins.",
           windows: [{day_offset: 2, hour: 9, minute: 30, notes: "Only shared opening for the clinical and school partners."}],
-          status: "approved",
+          status: "proposed",
           history_type: "call",
           history: "Dr. Brooks shared that youth crisis referrals increased this spring and proposed a common referral card for recreation staff, school counselors, and library teams.",
           briefing_context: agenda(topic: "Coordinated youth response", ask: "Authorize staff participation in a ninety-day referral pilot.", outcome: "Agreement on pilot scope, launch date, and public messaging.", owner: "Sam Rivera")
@@ -356,7 +329,7 @@ module Holocron
             {day_offset: 7, hour: 13, minute: 0, notes: "Indoor briefing at City Hall if field conditions are poor."},
             {day_offset: 8, hour: 10, minute: 0, notes: "Alternate field window with engineering consultant available."}
           ],
-          status: "submitted",
+          status: "proposed",
           history_type: "meeting",
           history: "Jonah and Ana presented updated flood modeling showing two low riverfront segments where a restored flood bench could reduce neighborhood risk and protect the trail connection.",
           briefing_context: agenda(topic: "East riverfront flood mitigation", ask: "Select a preferred concept for grant development.", outcome: "Direction on the concept, community engagement, and matching-fund strategy.", owner: "Jordan Lee")
@@ -377,7 +350,7 @@ module Holocron
             {day_offset: 2, hour: 15, minute: 0, notes: "In person; operations map will be available."},
             {day_offset: 5, hour: 11, minute: 0, notes: "Video backup before vendor call at 1:00 PM."}
           ],
-          status: "under_review",
+          status: "proposed",
           history_type: "event",
           history: "Sofia reported that the spring evening market drew roughly 2,400 visitors with no major safety issues; merchants requested clearer loading zones and an earlier sanitation sweep.",
           briefing_context: agenda(topic: "Night market operating plan", ask: "Resolve the remaining city service and street closure decisions.", outcome: "A go-forward plan that allows vendor confirmations to proceed.", owner: "Maya Chen")
@@ -398,7 +371,7 @@ module Holocron
             {day_offset: 8, hour: 16, minute: 0, notes: "Council office; employer co-chairs available."},
             {day_offset: 9, hour: 10, minute: 30, notes: "City Hall; community college president can join remotely."}
           ],
-          status: "approved",
+          status: "proposed",
           history_type: "meeting",
           history: "Malcolm and Kelsey outlined a workforce compact that could create sixty paid student placements and a shared training-equipment fund for three local manufacturers.",
           briefing_context: agenda(topic: "Employer workforce compact", ask: "Confirm the city's role and identify a public launch window.", outcome: "A refined compact with clear city commitments and a launch owner.", owner: "Sam Rivera")
@@ -419,7 +392,7 @@ module Holocron
             {day_offset: 12, hour: 8, minute: 0, notes: "Preferred; observes actual summer program arrival traffic."},
             {day_offset: 13, hour: 16, minute: 0, notes: "Alternate; meet at the Eastside Elementary main entrance."}
           ],
-          status: "submitted",
+          status: "proposed",
           history_type: "call",
           history: "Amina shared results from a parent walk audit documenting poor sight lines, long crossing distances, and frequent speeding near Eastside Elementary's north entrance.",
           briefing_context: agenda(topic: "Eastside school route safety", ask: "Prioritize quick-build changes for installation before the first day of school.", outcome: "Agreement on two immediate treatments and a resident communication plan.", owner: "Jordan Lee")
@@ -437,7 +410,7 @@ module Holocron
           source_channel: "web",
           original_request_text: "The Foundation would like to brief the Mayor on a matching campaign for 300 loaner hotspots and expanded digital navigator hours. We need to confirm whether the city can support outreach and identify eligible neighborhoods.",
           windows: [{day_offset: 7, hour: 15, minute: 30, notes: "Library innovation lab; device-lending demo included."}],
-          status: "under_review",
+          status: "proposed",
           history_type: "meeting",
           history: "Rhea demonstrated the library's digital navigator pilot, which completed 420 one-on-one support sessions and maintained a waitlist for loaner hotspots.",
           briefing_context: agenda(topic: "Digital access expansion", ask: "Confirm city outreach support for the Foundation's matching campaign.", outcome: "A target neighborhood list and shared outreach plan.", owner: "Sam Rivera")
@@ -459,7 +432,7 @@ module Holocron
             {day_offset: 13, hour: 9, minute: 0, notes: "City Hall backup option."},
             {day_offset: 14, hour: 13, minute: 30, notes: "Network office; board chair available."}
           ],
-          status: "submitted",
+          status: "proposed",
           history_type: "event",
           history: "Camila and Luis hosted a bilingual permit clinic attended by thirty-one business owners; recurring questions concerned inspection sequencing, signage permits, and city vendor registration.",
           briefing_context: agenda(topic: "West Mesa small-business barriers", ask: "Select two near-term improvements for permits and procurement access.", outcome: "A practical follow-up plan with bilingual owner communications.", owner: "Maya Chen")

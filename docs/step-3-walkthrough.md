@@ -1,20 +1,19 @@
 # Step 3 Walkthrough
 
-Migration `003` adds request status, `lock_version`, immutable transitions, and
-approval/decline decisions. It backfills every existing request to `submitted`
-with a system-authored initial transition.
+Migration `020` simplifies scheduling requests to two states: `proposed` and
+`scheduled`. It maps every existing non-scheduled request to `proposed` and
+removes the transition and decision tables.
 
-`SchedulingRequestWorkflow` owns the allowed transition graph, reason codes,
-optimistic version check, conditional status update, transition insertion,
-decision insertion, and audit event. All writes happen in one transaction.
-Ordinary request edits use the same version check and increment the version
-without changing status.
+Creating an intake produces a proposed meeting. The request detail exposes the
+time picker immediately. Confirming a time conditionally updates the request to
+`scheduled` and creates the meeting, briefing, initial version, preparation
+task, and audit events in one transaction.
 
-The API exposes `POST /api/scheduling-requests/:id/transitions`. The request
-detail response includes the current status and version, valid next actions,
-and serialized transition history. The browser shows status in the inbox,
-reasoned workflow actions on request detail, and the newest-first timeline.
+The API uses `POST /api/scheduling-requests/:id/meeting` as the single scheduling
+command. It requires `expected_request_lock_version`; stale callers receive
+`409 Conflict` without partial writes. The browser labels proposed records
+“Awaiting scheduling” and uses ordinary audit events for the activity list.
 
-Tests cover the full submitted-to-scheduled path, approval decisions, illegal
-state jumps, stale transitions, stale edits, actor enforcement, and rollback of
-all workflow side effects after a rejected command.
+Tests cover proposal creation, atomic scheduling, stale scheduling and edits,
+actor enforcement, duplicate scheduling, and rollback of every scheduling side
+effect after a rejected command.

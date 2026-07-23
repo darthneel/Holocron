@@ -48,6 +48,16 @@ module Holocron
       end
     end
 
+    class ScheduleConflictError < StandardError
+      attr_reader :current_lock_version, :current_status
+
+      def initialize(request)
+        super("Proposed meeting changed since it was loaded.")
+        @current_lock_version = request&.fetch(:lock_version, nil)
+        @current_status = request&.fetch(:status, nil)
+      end
+    end
+
     class GenerationError < StandardError
       attr_reader :provider, :model, :validation_errors
 
@@ -118,6 +128,7 @@ module Holocron
 
     def create_for_request(request_id:, attributes:, workspace:, actor:)
       meeting_attributes = normalize_meeting(attributes)
+      expected_request_lock_version = expected_schedule_lock_version(attributes)
       db = Database.db
       briefing_id = SecureRandom.uuid
 
@@ -125,18 +136,35 @@ module Holocron
         request = db[:scheduling_requests].where(id: request_id, workspace_id: workspace[:id]).first
         return nil unless request
 
-        unless request[:status] == "scheduled"
-          raise StateError.new("Only a scheduled request can produce a meeting and briefing.", current_status: request[:status])
+        unless request[:status] == "proposed"
+          raise StateError.new("Only a proposed meeting can be scheduled.", current_status: request[:status])
+        end
+
+        unless request[:lock_version] == expected_request_lock_version
+          raise ScheduleConflictError.new(request)
         end
 
         if db[:meetings].where(scheduling_request_id: request_id).any?
-          raise StateError.new("This scheduling request already has a meeting and briefing.", current_status: request[:status])
+          raise StateError.new("This proposed meeting has already been scheduled.", current_status: request[:status])
         end
 
         now = Time.now.utc
         correlation_id = SecureRandom.uuid
         meeting_id = SecureRandom.uuid
         context = Relationships.context_for_request(request_id: request_id, workspace: workspace)
+        scheduled = db[:scheduling_requests]
+          .where(
+            id: request_id,
+            workspace_id: workspace[:id],
+            status: "proposed",
+            lock_version: expected_request_lock_version
+          )
+          .update(
+            status: "scheduled",
+            lock_version: expected_request_lock_version + 1,
+            updated_at: now
+          )
+        raise ScheduleConflictError.new(db[:scheduling_requests].where(id: request_id).first) if scheduled.zero?
 
         meeting = {
           id: meeting_id,
@@ -185,6 +213,16 @@ module Holocron
           occurred_at: now
         )
 
+        write_audit(
+          workspace: workspace,
+          actor: actor,
+          event_type: "scheduling_request.scheduled",
+          subject_type: "scheduling_request",
+          subject_id: request_id,
+          payload: {meeting_id: meeting_id, briefing_id: briefing_id},
+          correlation_id: correlation_id,
+          occurred_at: now
+        )
         write_audit(
           workspace: workspace,
           actor: actor,
@@ -493,6 +531,16 @@ module Holocron
         ends_at: ends_at,
         location: optional_text(attributes["location"], limit: 500)
       }
+    end
+
+    def expected_schedule_lock_version(attributes)
+      value = Integer(attributes["expected_request_lock_version"], exception: false)
+      unless value&.positive?
+        raise ValidationError, {
+          "expected_request_lock_version" => "Expected proposed meeting lock version must be a positive integer."
+        }
+      end
+      value
     end
 
     def normalize_sections(value, workspace:)

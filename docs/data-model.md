@@ -3,13 +3,13 @@
 The project foundation models one leadership office per workspace. Each workspace
 has exactly one principal, represented both as a workspace member and as a
 principal domain profile. Scheduling requests are owned by the workspace,
-directed to that principal, and retain their structured candidate windows. The
-current workflow status is projected onto each request, while immutable
-transition and decision records preserve how it reached that status. Canonical
-people and organizations surround those requests. Each person may point to one
-current organization, explicit person links preserve each request's context,
-and interactions retain source and authorship. A scheduled request may produce
-one meeting and briefing. Briefing content is stored in immutable numbered
+directed to that principal, and retain their structured candidate windows. Each
+request is either a `proposed` or `scheduled` meeting, with ordinary audit events
+preserving creation and scheduling provenance. Canonical people and organizations
+surround those requests. Each person may point to one current organization,
+explicit person links preserve each request's context, and interactions retain
+source and authorship. Scheduling a proposed request creates one meeting and
+briefing in the same transaction. Briefing content is stored in immutable numbered
 versions with ordered sections, source snapshots, and per-version review
 decisions. Request extraction attempts sit outside the domain-write path until a
 staff member accepts one into at most one scheduling request. Grounded generation

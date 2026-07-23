@@ -21,15 +21,15 @@ Only transient failures receive one retry.
 
 Staff must review and may edit every successful proposal in the normal request
 form. Acceptance calls `SchedulingRequests.create`; the model never calls domain
-services. The request, canonical relationship context, initial workflow state,
-extraction link, and audit events commit in one transaction. The service forces
+services. The proposed meeting, canonical relationship context, extraction link,
+and audit events commit in one transaction. The service forces
 the request source to email and restores the retained extraction input regardless
 of client payload. One extraction can be accepted at most once.
 
 ## Consequences
 
 - Probabilistic output cannot independently create people, organizations,
-  requests, workflow history, or external actions.
+  proposed meetings, scheduled meetings, briefings, or external actions.
 - Incomplete valid output remains useful because unknown facts become review
   warnings rather than fabricated defaults.
 - Provider failures and refusals are observable without polluting domain tables.

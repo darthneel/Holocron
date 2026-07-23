@@ -4,11 +4,12 @@ Step 5 implements meeting briefing assembly without AI.
 
 ## Representative Flow
 
-1. Staff move a scheduling request through approval to `scheduled`.
-2. The request detail collects the confirmed meeting title, start, end, and
+1. AI extraction or manual intake creates a `proposed` meeting.
+2. The proposed-meeting detail collects the confirmed meeting title, start, end, and
    location.
-3. `Briefings.create_for_request` verifies the state and creates one meeting,
-   one briefing, and version 1 in a single transaction.
+3. `Briefings.create_for_request` verifies the request lock, marks it
+   `scheduled`, and creates one meeting, one briefing, and version 1 in a single
+   transaction.
 4. Version 1 is assembled deterministically from request details, linked people,
    their current organizations, and person-centered interactions.
 5. Every section receives validated source snapshots where relevant.
@@ -45,8 +46,9 @@ section. Neither reviews nor sources need an independent lifecycle table.
 
 ## Failure Cases
 
-- A request that is not `scheduled` cannot create a meeting.
+- A record that is not `proposed` cannot be scheduled.
 - A request cannot create a second meeting or briefing.
+- A stale proposed-meeting lock version creates no meeting or briefing.
 - Invalid meeting times create no records.
 - A missing or inactive development actor cannot write.
 - An invalid or cross-workspace source rejects the complete version.

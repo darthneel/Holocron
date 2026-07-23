@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  CircleHelp,
   Inbox,
   Link2,
   ListTodo,
@@ -146,38 +145,6 @@ type RequestListItem = {
   updated_at: string;
 };
 
-type WorkflowReason = {
-  code: string;
-  label: string;
-};
-
-type AvailableTransition = {
-  to_status: string;
-  label: string;
-  reasons: WorkflowReason[];
-};
-
-type StateTransition = {
-  id: string;
-  from_status: string | null;
-  to_status: string;
-  reason_code: string;
-  notes: string | null;
-  actor: {
-    id: string;
-    display_name: string;
-  } | null;
-  decision: {
-    id: string;
-    decision: string;
-    reason_code: string;
-    decided_by_workspace_member_id: string;
-    decided_at: string;
-  } | null;
-  correlation_id: string;
-  occurred_at: string;
-};
-
 type Participant = {
   id?: string;
   name: string;
@@ -306,8 +273,6 @@ type SchedulingRequest = {
   } | null;
   briefing: RequestBriefingSummary | null;
   relationship_context: RelationshipContext;
-  available_transitions: AvailableTransition[];
-  transitions: StateTransition[];
   audit_events: AuditEvent[];
   created_at: string;
   updated_at: string;
@@ -524,11 +489,7 @@ const sourceLabels: Record<string, string> = {
 };
 
 const statusLabels: Record<string, string> = {
-  submitted: "Submitted",
-  needs_information: "Needs information",
-  under_review: "Under review",
-  approved: "Approved",
-  declined: "Declined",
+  proposed: "Awaiting scheduling",
   scheduled: "Scheduled",
 };
 
@@ -569,13 +530,6 @@ function formatEvent(eventType: string) {
 
 function formatStatus(status: string) {
   return statusLabels[status] ?? status.replaceAll("_", " ");
-}
-
-function formatReason(reasonCode: string) {
-  return reasonCode
-    .split("_")
-    .map((word) => word[0]?.toUpperCase() + word.slice(1))
-    .join(" ");
 }
 
 function formatRelationshipType(value: string) {
@@ -841,7 +795,6 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
-  const [isTransitioning, setIsTransitioning] = useState(false);
   const [isRelationshipSaving, setIsRelationshipSaving] = useState(false);
   const [isBriefingSaving, setIsBriefingSaving] = useState(false);
   const [workspaceTheme, setWorkspaceTheme] = useState<WorkspaceTheme>("dark");
@@ -1306,54 +1259,6 @@ export default function Home() {
     }
   }
 
-  async function transitionRequest(toStatus: string, reasonCode: string, notes: string) {
-    if (!selectedRequest || !session) return false;
-
-    setIsTransitioning(true);
-    setError("");
-
-    try {
-      const response = await fetch(
-        `${API_URL}/api/scheduling-requests/${selectedRequest.id}/transitions`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Holocron-Actor-Email": session.email,
-          },
-          body: JSON.stringify({
-            to_status: toStatus,
-            reason_code: reasonCode,
-            notes,
-            expected_lock_version: selectedRequest.lock_version,
-          }),
-        },
-      );
-      const body = await response.json();
-
-      if (!response.ok) {
-        if (response.status === 409) {
-          requestDetailCache.current.delete(selectedRequest.id);
-          await selectRequest(selectedRequest.id);
-          await loadRequests();
-        }
-        throw new Error(body.error ?? "Unable to update request status.");
-      }
-
-      requestDetailCache.current.set(body.id, body);
-      setSelectedRequest(body);
-      await loadRequests();
-      refreshFoundationCalendar();
-      setAuditEvents(null);
-      return true;
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to update request status.");
-      return false;
-    } finally {
-      setIsTransitioning(false);
-    }
-  }
-
   async function saveRelationship(resource: string, payload: Record<string, unknown>, method: "POST" | "PATCH" = "POST") {
     if (!session) return false;
 
@@ -1441,7 +1346,7 @@ export default function Home() {
     try {
       const createdBriefing = await sendBriefingCommand(
         `/api/scheduling-requests/${selectedRequest.id}/meeting`,
-        payload,
+        {...payload, expected_request_lock_version: selectedRequest.lock_version},
       );
 
       try {
@@ -1699,10 +1604,8 @@ export default function Home() {
                     request={selectedRequest}
                     briefing={selectedRequest.briefing}
                     canMutate={canMutate}
-                    isTransitioning={isTransitioning}
                     isBriefingSaving={isBriefingSaving}
                     onEdit={beginEditing}
-                    onTransition={transitionRequest}
                     onCreateMeeting={createMeetingAndBriefing}
                     onOpenBriefing={openBriefing}
                   />
@@ -2528,14 +2431,14 @@ function RequestComposer({ form, extraction, formErrors, isSaving, isEditing, sc
   onRemoveCandidateWindow: (index: number) => void;
 }) {
   return <form className="request-composer" onSubmit={onSave} noValidate>
-    <div className="request-panel-head"><div><p className="eyebrow">{isEditing ? "Edit intake" : "New intake"}</p><h2>{isEditing ? "Update request" : "Create request"}</h2></div><button className="icon-button" type="button" onClick={onCancel} title="Close request editor"><X aria-hidden="true" /></button></div>
-    {extraction ? <aside className="extraction-review-band" aria-label="Extracted request review summary"><Sparkles aria-hidden="true" /><div className="extraction-review-content"><header className="extraction-review-header"><div><strong>AI draft</strong><span>Review before creating</span></div><small>{extraction.provider} · {extraction.model} · {extraction.prompt_version}</small></header>{form.briefing_context.agenda_items.length > 0 ? <section className="extraction-agenda"><h3>Briefing agenda</h3><ul>{form.briefing_context.agenda_items.map((item, index) => <li key={`${item.topic ?? "agenda"}-${index}`}><strong>{item.topic ?? `Agenda item ${index + 1}`}</strong>{item.ask || item.decision_needed ? <span>{item.ask ?? item.decision_needed}</span> : null}</li>)}</ul></section> : null}{extraction.warnings.length > 0 ? <section className="extraction-review-notices"><h3>Check before saving</h3><ul>{extraction.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section> : null}</div></aside> : null}
+    <div className="request-panel-head"><div><p className="eyebrow">{isEditing ? "Edit intake" : extraction ? "AI meeting preview" : "New intake"}</p><h2>{isEditing ? "Update proposed meeting" : extraction ? "Review proposed meeting" : "Create proposed meeting"}</h2></div><button className="icon-button" type="button" onClick={onCancel} title="Close request editor"><X aria-hidden="true" /></button></div>
+    {extraction ? <aside className="extraction-review-band" aria-label="AI meeting preview"><Sparkles aria-hidden="true" /><div className="extraction-review-content"><header className="extraction-review-header"><div><strong>AI meeting preview</strong><span>Review the extracted details</span></div><small>{extraction.provider} · {extraction.model} · {extraction.prompt_version}</small></header>{form.briefing_context.agenda_items.length > 0 ? <section className="extraction-agenda"><h3>Agenda and context</h3><ul>{form.briefing_context.agenda_items.map((item, index) => <li key={`${item.topic ?? "agenda"}-${index}`}><strong>{item.topic ?? `Agenda item ${index + 1}`}</strong>{item.ask || item.decision_needed ? <span>{item.ask ?? item.decision_needed}</span> : null}</li>)}</ul></section> : null}{extraction.warnings.length > 0 ? <section className="extraction-review-notices"><h3>Check before saving</h3><ul>{extraction.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section> : null}</div></aside> : null}
     {Object.keys(formErrors).length > 0 ? <p className="form-error form-error-summary" role="alert">{Object.values(formErrors).join(" ")}</p> : null}
     <fieldset className="request-fieldset"><legend>Requester</legend><div className="field-grid two"><Field label="Name" error={formErrors.requester_name}><input value={form.requester_name} onChange={(event) => onFieldChange("requester_name", event.target.value)} /></Field><Field label="Organization"><input value={form.requester_organization} onChange={(event) => onFieldChange("requester_organization", event.target.value)} /></Field><Field label="Email" error={formErrors.requester_email}><input type="email" value={form.requester_email} onChange={(event) => onFieldChange("requester_email", event.target.value)} /></Field><Field label="Source" error={formErrors.source_channel}><select value={form.source_channel} disabled={Boolean(extraction)} onChange={(event) => onFieldChange("source_channel", event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field></div></fieldset>
     <fieldset className="request-fieldset"><legend>Request</legend><div className="field-grid two"><Field label="Duration (minutes)" error={formErrors.requested_duration_minutes}><input type="number" min="15" max="480" step="15" value={form.requested_duration_minutes} onChange={(event) => onFieldChange("requested_duration_minutes", event.target.value)} /></Field><Field label="Assigned scheduler" error={formErrors.assigned_scheduler_member_id}><select value={form.assigned_scheduler_member_id} onChange={(event) => onFieldChange("assigned_scheduler_member_id", event.target.value)}>{schedulerMembers.map((member) => <option key={member.id} value={member.id}>{member.display_name} · {formatRole(member.role)}</option>)}</select></Field></div><Field label="Purpose" error={formErrors.purpose}><textarea rows={3} value={form.purpose} onChange={(event) => onFieldChange("purpose", event.target.value)} /></Field><Field label="Preferred location"><input value={form.preferred_location} onChange={(event) => onFieldChange("preferred_location", event.target.value)} placeholder="City Hall, video call, or another stated location" /></Field><Field label="Availability notes"><textarea rows={2} value={form.availability_notes} onChange={(event) => onFieldChange("availability_notes", event.target.value)} placeholder="Any useful context that does not fit a candidate window." /></Field><Field label="Original request text"><textarea rows={3} readOnly={Boolean(extraction)} value={form.original_request_text} onChange={(event) => onFieldChange("original_request_text", event.target.value)} /></Field></fieldset>
     <fieldset className="request-fieldset"><div className="fieldset-heading"><legend>Candidate windows</legend><button className="subtle-command" type="button" onClick={onAddCandidateWindow}><Plus aria-hidden="true" />Add window</button></div>{form.candidate_windows.length === 0 ? <p className="empty-fieldset">No structured windows yet. Notes can still capture a general preference.</p> : form.candidate_windows.map((window, index) => <div className="repeat-row" key={`window-${index}`}><div className="field-grid candidate-grid"><Field label="Date" error={formErrors[`candidate_windows.${index}.candidate_date`]}><input type="date" value={window.candidate_date} onChange={(event) => onCandidateWindowChange(index, "candidate_date", event.target.value)} /></Field><Field label="Start"><input type="datetime-local" value={window.starts_at ?? ""} onChange={(event) => onCandidateWindowChange(index, "starts_at", event.target.value)} /></Field><Field label="End" error={formErrors[`candidate_windows.${index}.ends_at`]}><input type="datetime-local" value={window.ends_at ?? ""} onChange={(event) => onCandidateWindowChange(index, "ends_at", event.target.value)} /></Field></div><Field label="Notes"><input value={window.notes} onChange={(event) => onCandidateWindowChange(index, "notes", event.target.value)} placeholder="Timezone, preference, or other window context" /></Field><button className="remove-button" type="button" onClick={() => onRemoveCandidateWindow(index)} title="Remove candidate window"><X aria-hidden="true" /></button></div>)}</fieldset>
     <fieldset className="request-fieldset"><div className="fieldset-heading"><legend>Participants</legend><button className="subtle-command" type="button" onClick={onAddParticipant}><UserPlus aria-hidden="true" />Add participant</button></div>{form.participants.length === 0 ? <p className="empty-fieldset">Add people beyond the requester when they are relevant to the meeting.</p> : form.participants.map((participant, index) => <div className="repeat-row participant-row" key={`participant-${index}`}><div className="field-grid participant-grid"><Field label="Name"><input value={participant.name} onChange={(event) => onParticipantChange(index, "name", event.target.value)} /></Field><Field label="Email"><input type="email" value={participant.email} onChange={(event) => onParticipantChange(index, "email", event.target.value)} /></Field><Field label="Role"><select value={participant.role} onChange={(event) => onParticipantChange(index, "role", event.target.value)}><option value="">Select role</option><option value="required">Required</option><option value="optional">Optional</option><option value="staff">Staff</option></select></Field></div><Field label="Organization"><input value={participant.organization} onChange={(event) => onParticipantChange(index, "organization", event.target.value)} /></Field><button className="remove-button" type="button" onClick={() => onRemoveParticipant(index)} title="Remove participant"><X aria-hidden="true" /></button></div>)}</fieldset>
-    <div className="composer-actions"><button className="icon-text-button" type="button" onClick={onCancel}><ArrowLeft aria-hidden="true" /><span>Cancel</span></button><button className="primary-command" type="submit" disabled={isSaving}><Save aria-hidden="true" /><span>{isSaving ? "Saving" : isEditing ? "Save changes" : "Create request"}</span></button></div>
+    <div className="composer-actions"><button className="icon-text-button" type="button" onClick={onCancel}><ArrowLeft aria-hidden="true" /><span>Cancel</span></button><button className="primary-command" type="submit" disabled={isSaving}><Save aria-hidden="true" /><span>{isSaving ? "Saving" : isEditing ? "Save changes" : "Save proposed meeting"}</span></button></div>
   </form>;
 }
 
@@ -2543,20 +2446,15 @@ function Field({ label, error, children }: {label: string; error?: string; child
   return <label className="request-field"><span>{label}</span>{children}{error ? <small className="field-error">{error}</small> : null}</label>;
 }
 
-function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefingSaving, onEdit, onTransition, onCreateMeeting, onOpenBriefing }: {
+function RequestDetail({ request, briefing, canMutate, isBriefingSaving, onEdit, onCreateMeeting, onOpenBriefing }: {
   request: SchedulingRequest;
   briefing: RequestBriefingSummary | null;
   canMutate: boolean;
-  isTransitioning: boolean;
   isBriefingSaving: boolean;
   onEdit: () => void;
-  onTransition: (toStatus: string, reasonCode: string, notes: string) => Promise<boolean>;
   onCreateMeeting: (payload: Record<string, unknown>) => Promise<boolean>;
   onOpenBriefing: (id: string) => void;
 }) {
-  const [selectedTransition, setSelectedTransition] = useState<AvailableTransition | null>(null);
-  const [reasonCode, setReasonCode] = useState("");
-  const [notes, setNotes] = useState("");
   const [expandedPersonHistory, setExpandedPersonHistory] = useState<Record<string, boolean>>({});
   const suggestedWindows = request.candidate_windows.filter((window) => window.starts_at && window.ends_at);
   const preferredWindow = suggestedWindows[0];
@@ -2604,24 +2502,6 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
     })),
   ];
 
-  function chooseTransition(transition: AvailableTransition) {
-    setSelectedTransition(transition);
-    setReasonCode(transition.reasons[0]?.code ?? "");
-    setNotes("");
-  }
-
-  async function submitTransition(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedTransition || !reasonCode) return;
-
-    const succeeded = await onTransition(selectedTransition.to_status, reasonCode, notes);
-    if (succeeded) {
-      setSelectedTransition(null);
-      setReasonCode("");
-      setNotes("");
-    }
-  }
-
   async function createMeeting(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await onCreateMeeting({
@@ -2663,47 +2543,39 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
 
       {request.request_extraction ? <div className="request-extraction-origin"><Sparkles aria-hidden="true" /><div><strong>Created from reviewed AI extraction</strong><span>{request.request_extraction.provider} · {request.request_extraction.model} · {request.request_extraction.prompt_version}</span></div></div> : null}
 
-      {canMutate && request.available_transitions.length > 0 ? (
-        <section className="workflow-actions" aria-labelledby="workflow-actions-title">
-          <h3 id="workflow-actions-title">Workflow actions</h3>
-          <div className="workflow-action-row">
-            {request.available_transitions.map((transition) => (
-              <button
-                className={`workflow-action workflow-action-${transition.to_status} ${selectedTransition?.to_status === transition.to_status ? "is-selected" : ""}`}
-                type="button"
-                key={transition.to_status}
-                onClick={() => chooseTransition(transition)}
-                disabled={isTransitioning}
-              >
-                <WorkflowIcon status={transition.to_status} />
-                <span>{transition.label}</span>
-              </button>
-            ))}
+      {request.status === "proposed" && canMutate ? (
+        <section className="meeting-briefing-block meeting-schedule-block">
+          <div className="meeting-briefing-heading">
+            <div><p className="eyebrow">Confirm a time</p><h3>Schedule meeting</h3></div>
+            <span className="request-status request-status-proposed">{request.request_extraction ? "AI context ready" : "Details ready"}</span>
           </div>
-
-          {selectedTransition ? (
-            <form className="transition-form" onSubmit={submitTransition}>
-              <Field label="Reason">
-                <select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>
-                  {selectedTransition.reasons.map((reason) => <option key={reason.code} value={reason.code}>{reason.label}</option>)}
-                </select>
-              </Field>
-              <Field label="Notes">
-                <textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} />
-              </Field>
-              <div className="transition-form-actions">
-                <button className="icon-text-button" type="button" onClick={() => setSelectedTransition(null)} disabled={isTransitioning}><X aria-hidden="true" /><span>Cancel</span></button>
-                <button className={`primary-command ${selectedTransition.to_status === "declined" ? "danger-command" : ""}`} type="submit" disabled={isTransitioning || !reasonCode}>
-                  <WorkflowIcon status={selectedTransition.to_status} />
-                  <span>{isTransitioning ? "Updating" : `Confirm ${selectedTransition.label.toLowerCase()}`}</span>
-                </button>
+          <p className="meeting-schedule-intro">Select a suggested time or enter another. The meeting and its briefing will be created together.</p>
+          <form className="meeting-create-form" onSubmit={createMeeting}>
+            <fieldset className="meeting-time-options">
+              <legend>Meeting time</legend>
+              <div className="meeting-time-options-list">
+                {suggestedWindows.map((window, index) => {
+                  const windowId = window.id ?? `window-${window.candidate_date}-${window.starts_at}`;
+                  return <label className={`meeting-time-option ${timeSelection === windowId ? "is-selected" : ""}`} key={windowId}>
+                    <input type="radio" name="meeting-time" checked={timeSelection === windowId} onChange={() => chooseSuggestedWindow(window)} />
+                    <span><strong>{`Suggested time ${index + 1}`}</strong><small>{formatDateTime(window.starts_at!)} to {formatDateTime(window.ends_at!)}</small></span>
+                  </label>;
+                })}
+                <label className={`meeting-time-option ${timeSelection === "custom" ? "is-selected" : ""}`}>
+                  <input type="radio" name="meeting-time" checked={timeSelection === "custom"} onChange={chooseCustomTime} />
+                  <span><strong>Custom date and time</strong><small>Enter another time for this meeting.</small></span>
+                </label>
               </div>
-            </form>
-          ) : null}
+            </fieldset>
+            <div className="field-grid two">
+              <Field label="Meeting title"><input required value={meetingForm.title} onChange={(event) => setMeetingForm({...meetingForm, title: event.target.value})} /></Field>
+              <Field label="Location"><input value={meetingForm.location} onChange={(event) => setMeetingForm({...meetingForm, location: event.target.value})} /></Field>
+              {timeSelection === "custom" ? <><Field label="Starts"><input required type="datetime-local" value={meetingForm.starts_at} onChange={(event) => setMeetingForm({...meetingForm, starts_at: event.target.value})} /></Field><Field label="Ends"><input required type="datetime-local" value={meetingForm.ends_at} onChange={(event) => setMeetingForm({...meetingForm, ends_at: event.target.value})} /></Field></> : null}
+            </div>
+            <button className="primary-command" type="submit" disabled={isBriefingSaving}><CalendarCheck aria-hidden="true" /><span>{isBriefingSaving ? "Scheduling" : "Confirm and schedule"}</span></button>
+          </form>
         </section>
-      ) : null}
-
-      {request.status === "scheduled" ? (
+      ) : request.status === "scheduled" ? (
         <section className="meeting-briefing-block">
           <div className="meeting-briefing-heading"><div><p className="eyebrow">Meeting preparation</p><h3>Meeting and briefing</h3></div>{briefing ? <span className={`briefing-status briefing-status-${briefing.status}`}>{briefingStatusLabels[briefing.status]}</span> : null}</div>
           {briefing ? (
@@ -2714,32 +2586,7 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
               </div>
               {briefing.tasks.map((task) => <div className="meeting-preparation-task" key={task.id}><ListTodo aria-hidden="true" /><span><small>Preparation task · {formatRelationshipType(task.status)}</small><strong>{task.title}</strong><small>{task.assignee?.display_name || "Unassigned"}{task.due_at ? ` · Due ${formatDateTime(task.due_at)}` : ""}</small></span></div>)}
             </>
-          ) : canMutate ? (
-            <form className="meeting-create-form" onSubmit={createMeeting}>
-              <fieldset className="meeting-time-options">
-                <legend>Meeting time</legend>
-                <div className="meeting-time-options-list">
-                  {suggestedWindows.map((window, index) => {
-                    const windowId = window.id ?? `window-${window.candidate_date}-${window.starts_at}`;
-                    return <label className={`meeting-time-option ${timeSelection === windowId ? "is-selected" : ""}`} key={windowId}>
-                      <input type="radio" name="meeting-time" checked={timeSelection === windowId} onChange={() => chooseSuggestedWindow(window)} />
-                      <span><strong>{`Suggested window ${index + 1}`}</strong><small>{formatDateTime(window.starts_at!)} to {formatDateTime(window.ends_at!)}</small></span>
-                    </label>;
-                  })}
-                  <label className={`meeting-time-option ${timeSelection === "custom" ? "is-selected" : ""}`}>
-                    <input type="radio" name="meeting-time" checked={timeSelection === "custom"} onChange={chooseCustomTime} />
-                    <span><strong>Custom date and time</strong><small>Enter a date and time outside the suggested windows.</small></span>
-                  </label>
-                </div>
-              </fieldset>
-              <div className="field-grid two">
-                <Field label="Meeting title"><input required value={meetingForm.title} onChange={(event) => setMeetingForm({...meetingForm, title: event.target.value})} /></Field>
-                <Field label="Location"><input value={meetingForm.location} onChange={(event) => setMeetingForm({...meetingForm, location: event.target.value})} /></Field>
-                {timeSelection === "custom" ? <><Field label="Starts"><input required type="datetime-local" value={meetingForm.starts_at} onChange={(event) => setMeetingForm({...meetingForm, starts_at: event.target.value})} /></Field><Field label="Ends"><input required type="datetime-local" value={meetingForm.ends_at} onChange={(event) => setMeetingForm({...meetingForm, ends_at: event.target.value})} /></Field></> : null}
-              </div>
-              <button className="primary-command" type="submit" disabled={isBriefingSaving}><BookOpen aria-hidden="true" /><span>{isBriefingSaving ? "Creating" : "Create meeting and briefing"}</span></button>
-            </form>
-          ) : <p className="muted-value">No briefing has been created for this meeting.</p>}
+          ) : <p className="muted-value">The meeting is scheduled. Its briefing is still being prepared.</p>}
         </section>
       ) : null}
 
@@ -2784,30 +2631,20 @@ function RequestDetail({ request, briefing, canMutate, isTransitioning, isBriefi
       {request.original_request_text ? <section className="detail-block"><h3>Original request</h3><blockquote>{request.original_request_text}</blockquote></section> : null}
 
       <section className="detail-block">
-        <h3>Workflow timeline</h3>
+        <h3>Activity</h3>
         <div className="workflow-timeline">
-          {[...request.transitions].reverse().map((transition) => (
-            <div className="timeline-event" key={transition.id}>
-              <span className={`timeline-icon request-status-${transition.to_status}`}><WorkflowIcon status={transition.to_status} /></span>
+          {request.audit_events.map((event) => (
+            <div className="timeline-event" key={event.id}>
+              <span className="timeline-icon"><ScrollText aria-hidden="true" /></span>
               <div>
-                <strong>{transition.from_status ? `${formatStatus(transition.from_status)} to ${formatStatus(transition.to_status)}` : formatStatus(transition.to_status)}</strong>
-                <span>{formatReason(transition.reason_code)} · {transition.actor?.display_name ?? "System"}</span>
-                {transition.notes ? <p>{transition.notes}</p> : null}
+                <strong>{formatEvent(event.event_type)}</strong>
+                <span>{formatRelationshipType(event.subject_type ?? "proposed meeting")}</span>
               </div>
-              {transition.decision ? <span className={`decision-marker decision-${transition.decision.decision}`}>{formatStatus(transition.decision.decision)}</span> : null}
-              <time dateTime={transition.occurred_at}>{formatDateTime(transition.occurred_at)}</time>
+              <time dateTime={event.occurred_at}>{formatDateTime(event.occurred_at)}</time>
             </div>
           ))}
         </div>
       </section>
     </article>
   );
-}
-
-function WorkflowIcon({ status }: {status: string}) {
-  if (status === "approved") return <CheckCircle2 aria-hidden="true" />;
-  if (status === "declined") return <XCircle aria-hidden="true" />;
-  if (status === "scheduled") return <CalendarCheck aria-hidden="true" />;
-  if (status === "needs_information") return <CircleHelp aria-hidden="true" />;
-  return <ScrollText aria-hidden="true" />;
 }

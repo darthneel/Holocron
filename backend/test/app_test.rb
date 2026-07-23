@@ -169,7 +169,7 @@ class HolocronAppTest < Minitest::Test
     assert_equal 2, proposed.length
     assert_equal "Option 1 of 2", proposed.first.fetch("option_label")
     assert_nil proposed.last.fetch("starts_at")
-    assert_equal "submitted", proposed.first.fetch("request_status")
+    assert_equal "proposed", proposed.first.fetch("request_status")
   end
 
   def test_calendar_validates_its_date_range
@@ -194,7 +194,7 @@ class HolocronAppTest < Minitest::Test
     assert_equal 8, organizations.uniq.length
     assert_equal 16, contacts.length
     assert_equal contacts.length, emails.uniq.length
-    assert definitions.all? { |definition| %w[submitted under_review approved].include?(definition.fetch(:status)) }
+    assert definitions.all? { |definition| definition.fetch(:status) == "proposed" }
     assert definitions.all? { |definition| definition.fetch(:contacts).length >= 2 }
   end
 
@@ -1014,9 +1014,10 @@ class HolocronAppTest < Minitest::Test
     assert_equal "Jordan Lee", created.dig("assigned_scheduler", "display_name")
     assert_equal 1, created.fetch("participants").length
     assert_equal 1, created.fetch("candidate_windows").length
-    assert_equal "submitted", created.fetch("status")
+    assert_equal "proposed", created.fetch("status")
     assert_equal 1, created.fetch("lock_version")
-    assert_equal "request_created", created.fetch("transitions").first.fetch("reason_code")
+    refute created.key?("transitions")
+    refute created.key?("available_transitions")
     assert_equal "scheduling_request.created", created.fetch("audit_events").first.fetch("event_type")
     assert_includes created.dig("relationship_context", "people").map { |person| person.fetch("primary_email") }, "contact@northriverarts.org"
     assert_equal "North River Arts Council", created.dig("relationship_context", "organizations", 0, "name")
@@ -1241,96 +1242,46 @@ class HolocronAppTest < Minitest::Test
     refute_includes content, "Initial purpose"
   end
 
-  def test_valid_workflow_transitions_create_history_decisions_and_audits
+  def test_scheduling_a_proposed_meeting_creates_the_meeting_briefing_and_audits_atomically
     created = create_scheduling_request
     request_id = created.fetch("id")
+    initial_audit_count = Holocron::Database.db[:audit_events].count
 
-    post_json "/api/scheduling-requests/#{request_id}/transitions", transition_payload(
-      to_status: "under_review",
-      expected_lock_version: 1,
-      reason_code: "review_started"
-    ), actor_headers
+    post_json "/api/scheduling-requests/#{request_id}/meeting", meeting_payload, actor_headers
 
-    assert last_response.ok?
-    under_review = parsed_response
-    assert_equal "under_review", under_review.fetch("status")
-    assert_equal 2, under_review.fetch("lock_version")
-    assert_equal 2, under_review.fetch("transitions").length
-    assert_nil under_review.fetch("transitions").last.fetch("decision")
-
-    post_json "/api/scheduling-requests/#{request_id}/transitions", transition_payload(
-      to_status: "approved",
-      expected_lock_version: 2,
-      reason_code: "ready_to_schedule",
-      notes: "Proceed with the preferred window."
-    ), actor_headers
-
-    assert last_response.ok?
-    approved = parsed_response
-    assert_equal "approved", approved.fetch("status")
-    assert_equal 3, approved.fetch("lock_version")
-    assert_equal "approved", approved.fetch("transitions").last.dig("decision", "decision")
-    assert_equal 1, Holocron::Database.db[:request_decisions].where(scheduling_request_id: request_id).count
-
-    post_json "/api/scheduling-requests/#{request_id}/transitions", transition_payload(
-      to_status: "scheduled",
-      expected_lock_version: 3,
-      reason_code: "time_confirmed"
-    ), actor_headers
-
-    assert last_response.ok?
-    scheduled = parsed_response
-    assert_equal "scheduled", scheduled.fetch("status")
-    assert_equal 4, scheduled.fetch("lock_version")
-    assert_empty scheduled.fetch("available_transitions")
-    assert_equal "scheduling_request.scheduled", scheduled.fetch("audit_events").first.fetch("event_type")
+    assert_equal 201, last_response.status
+    briefing = parsed_response
+    assert_equal request_id, briefing.dig("meeting", "scheduling_request_id")
+    request = Holocron::Database.db[:scheduling_requests].where(id: request_id).first
+    assert_equal "scheduled", request[:status]
+    assert_equal 2, request[:lock_version]
+    assert_equal 1, Holocron::Database.db[:meetings].where(scheduling_request_id: request_id).count
+    assert_equal 1, Holocron::Database.db[:briefings].where(id: briefing.fetch("id")).count
+    assert_operator Holocron::Database.db[:audit_events].count, :>=, initial_audit_count + 3
   end
 
-  def test_invalid_transition_rolls_back_every_workflow_write
+  def test_stale_schedule_is_rejected_without_partial_writes
     created = create_scheduling_request
     request_id = created.fetch("id")
-    transition_count = Holocron::Database.db[:request_state_transitions].count
-    decision_count = Holocron::Database.db[:request_decisions].count
-    audit_count = Holocron::Database.db[:audit_events].count
-
-    post_json "/api/scheduling-requests/#{request_id}/transitions", transition_payload(
-      to_status: "scheduled",
-      expected_lock_version: 1,
-      reason_code: "time_confirmed"
-    ), actor_headers
-
-    assert_equal 409, last_response.status
-    assert_equal "submitted", parsed_response.fetch("current_status")
-    assert_equal transition_count, Holocron::Database.db[:request_state_transitions].count
-    assert_equal decision_count, Holocron::Database.db[:request_decisions].count
-    assert_equal audit_count, Holocron::Database.db[:audit_events].count
-    assert_equal "submitted", Holocron::Database.db[:scheduling_requests].where(id: request_id).get(:status)
-  end
-
-  def test_stale_transition_is_rejected_without_partial_history
-    created = create_scheduling_request
-    request_id = created.fetch("id")
-
-    post_json "/api/scheduling-requests/#{request_id}/transitions", transition_payload(
-      to_status: "under_review",
-      expected_lock_version: 1,
-      reason_code: "review_started"
+    patch_json "/api/scheduling-requests/#{request_id}", scheduling_request_payload(
+      purpose: "Updated before scheduling",
+      expected_lock_version: created.fetch("lock_version")
     ), actor_headers
     assert last_response.ok?
 
-    transition_count = Holocron::Database.db[:request_state_transitions].count
+    meeting_count = Holocron::Database.db[:meetings].count
+    briefing_count = Holocron::Database.db[:briefings].count
     audit_count = Holocron::Database.db[:audit_events].count
-    post_json "/api/scheduling-requests/#{request_id}/transitions", transition_payload(
-      to_status: "needs_information",
-      expected_lock_version: 1,
-      reason_code: "missing_availability"
-    ), actor_headers
+
+    post_json "/api/scheduling-requests/#{request_id}/meeting", meeting_payload, actor_headers
 
     assert_equal 409, last_response.status
+    assert_equal "proposed", parsed_response.fetch("current_status")
     assert_equal 2, parsed_response.fetch("current_lock_version")
-    assert_equal "under_review", parsed_response.fetch("current_status")
-    assert_equal transition_count, Holocron::Database.db[:request_state_transitions].count
+    assert_equal meeting_count, Holocron::Database.db[:meetings].count
+    assert_equal briefing_count, Holocron::Database.db[:briefings].count
     assert_equal audit_count, Holocron::Database.db[:audit_events].count
+    assert_equal "proposed", Holocron::Database.db[:scheduling_requests].where(id: request_id).get(:status)
   end
 
   def test_stale_request_edit_is_rejected
@@ -1355,41 +1306,37 @@ class HolocronAppTest < Minitest::Test
     assert_equal "First edit", Holocron::Database.db[:scheduling_requests].where(id: request_id).get(:purpose)
   end
 
-  def test_transition_requires_an_active_actor
+  def test_scheduling_requires_an_active_actor
     created = create_scheduling_request
 
-    post_json "/api/scheduling-requests/#{created.fetch("id")}/transitions", transition_payload(
-      to_status: "under_review",
-      expected_lock_version: 1,
-      reason_code: "review_started"
-    )
+    post_json "/api/scheduling-requests/#{created.fetch("id")}/meeting", meeting_payload
 
     assert_equal 401, last_response.status
   end
 
-  def test_scheduled_request_creates_a_sourced_meeting_and_initial_briefing
-    scheduled = create_scheduled_request
+  def test_proposed_meeting_creates_a_sourced_meeting_and_initial_briefing
+    proposed = create_scheduling_request
     initial_audit_count = Holocron::Database.db[:audit_events].count
 
-    post_json "/api/scheduling-requests/#{scheduled.fetch("id")}/meeting", meeting_payload, actor_headers
+    post_json "/api/scheduling-requests/#{proposed.fetch("id")}/meeting", meeting_payload, actor_headers
 
     assert_equal 201, last_response.status
     briefing = parsed_response
     assert_equal "draft", briefing.fetch("status")
     assert_equal 1, briefing.fetch("lock_version")
     assert_equal 1, briefing.fetch("current_version_number")
-    assert_equal scheduled.fetch("id"), briefing.dig("meeting", "scheduling_request_id")
+    assert_equal proposed.fetch("id"), briefing.dig("meeting", "scheduling_request_id")
     assert_equal "City Hall - Conference Room A", briefing.dig("meeting", "location")
     task = briefing.fetch("tasks").fetch(0)
     assert_equal "Prepare briefing: #{briefing.dig("meeting", "title")}", task.fetch("title")
     assert_equal "open", task.fetch("status")
     assert_equal "system", task.fetch("origin")
-    assert_equal scheduled.dig("assigned_scheduler", "id"), task.dig("assignee", "id")
+    assert_equal proposed.dig("assigned_scheduler", "id"), task.dig("assignee", "id")
     assert_equal briefing.dig("meeting", "starts_at"), task.fetch("due_at")
     assert_equal 6, briefing.dig("versions", 0, "sections").length
     assert_includes briefing.dig("source_catalog").map { |source| source.fetch("source_type") }, "scheduling_request"
     assert_includes briefing.dig("source_catalog").map { |source| source.fetch("source_type") }, "person"
-    assert_equal 1, Holocron::Database.db[:meetings].where(scheduling_request_id: scheduled.fetch("id")).count
+    assert_equal 1, Holocron::Database.db[:meetings].where(scheduling_request_id: proposed.fetch("id")).count
     assert_equal 1, Holocron::Database.db[:briefings].where(id: briefing.fetch("id")).count
     assert_equal 1, Holocron::Database.db[:tasks].where(meeting_id: briefing.dig("meeting", "id")).count
     assert_equal 1, Holocron::Database.db[:task_state_transitions].where(task_id: task.fetch("id"), to_status: "open").count
@@ -1397,7 +1344,7 @@ class HolocronAppTest < Minitest::Test
     refute Holocron::Database.db.table_exists?(:briefing_reviews)
     stored_sources = JSON.parse(Holocron::Database.db[:briefing_sections].exclude(sources_json: "[]").get(:sources_json))
     assert stored_sources.all? { |source| source.key?("source_label") }
-    assert_equal initial_audit_count + 3, Holocron::Database.db[:audit_events].count
+    assert_equal initial_audit_count + 4, Holocron::Database.db[:audit_events].count
 
     get "/api/tasks"
     assert last_response.ok?
@@ -1407,7 +1354,7 @@ class HolocronAppTest < Minitest::Test
     assert last_response.ok?
     assert_includes parsed_response.fetch("briefings").map { |entry| entry.fetch("id") }, briefing.fetch("id")
 
-    get "/api/scheduling-requests/#{scheduled.fetch("id")}"
+    get "/api/scheduling-requests/#{proposed.fetch("id")}"
     assert last_response.ok?
     assert_equal briefing.fetch("id"), parsed_response.dig("briefing", "id")
     assert_equal "draft", parsed_response.dig("briefing", "status")
@@ -2282,8 +2229,11 @@ class HolocronAppTest < Minitest::Test
     end
   end
 
-  def test_unscheduled_request_cannot_create_a_meeting_or_partial_briefing
+  def test_scheduled_meeting_cannot_be_scheduled_twice
     created = create_scheduling_request
+    post_json "/api/scheduling-requests/#{created.fetch("id")}/meeting", meeting_payload, actor_headers
+    assert_equal 201, last_response.status
+
     meeting_count = Holocron::Database.db[:meetings].count
     briefing_count = Holocron::Database.db[:briefings].count
     task_count = Holocron::Database.db[:tasks].count
@@ -2292,7 +2242,7 @@ class HolocronAppTest < Minitest::Test
     post_json "/api/scheduling-requests/#{created.fetch("id")}/meeting", meeting_payload, actor_headers
 
     assert_equal 409, last_response.status
-    assert_match(/Only a scheduled request/, parsed_response.fetch("error"))
+    assert_match(/Only a proposed meeting/, parsed_response.fetch("error"))
     assert_equal meeting_count, Holocron::Database.db[:meetings].count
     assert_equal briefing_count, Holocron::Database.db[:briefings].count
     assert_equal task_count, Holocron::Database.db[:tasks].count
@@ -2300,10 +2250,10 @@ class HolocronAppTest < Minitest::Test
   end
 
   def test_meeting_and_briefing_creation_requires_an_active_actor
-    scheduled = create_scheduled_request
+    proposed = create_scheduling_request
     meeting_count = Holocron::Database.db[:meetings].count
 
-    post_json "/api/scheduling-requests/#{scheduled.fetch("id")}/meeting", meeting_payload
+    post_json "/api/scheduling-requests/#{proposed.fetch("id")}/meeting", meeting_payload
 
     assert_equal 401, last_response.status
     assert_equal meeting_count, Holocron::Database.db[:meetings].count
@@ -2648,36 +2598,9 @@ class HolocronAppTest < Minitest::Test
     parsed_response
   end
 
-  def transition_payload(to_status:, expected_lock_version:, reason_code:, notes: nil)
-    {
-      to_status: to_status,
-      expected_lock_version: expected_lock_version,
-      reason_code: reason_code,
-      notes: notes
-    }
-  end
-
-  def create_scheduled_request(overrides = {})
-    created = create_scheduling_request(overrides)
-    request_id = created.fetch("id")
-    [
-      ["under_review", "review_started", 1],
-      ["approved", "ready_to_schedule", 2],
-      ["scheduled", "time_confirmed", 3]
-    ].each do |to_status, reason_code, lock_version|
-      post_json "/api/scheduling-requests/#{request_id}/transitions", transition_payload(
-        to_status: to_status,
-        expected_lock_version: lock_version,
-        reason_code: reason_code
-      ), actor_headers
-      assert last_response.ok?
-    end
-    parsed_response
-  end
-
   def create_briefing(overrides = {})
-    scheduled = create_scheduled_request(overrides)
-    post_json "/api/scheduling-requests/#{scheduled.fetch("id")}/meeting", meeting_payload, actor_headers
+    proposed = create_scheduling_request(overrides)
+    post_json "/api/scheduling-requests/#{proposed.fetch("id")}/meeting", meeting_payload, actor_headers
     assert_equal 201, last_response.status
     parsed_response
   end
@@ -2687,7 +2610,8 @@ class HolocronAppTest < Minitest::Test
       title: "Community arts grant briefing",
       starts_at: "2026-08-11T14:00:00-06:00",
       ends_at: "2026-08-11T14:45:00-06:00",
-      location: "City Hall - Conference Room A"
+      location: "City Hall - Conference Room A",
+      expected_request_lock_version: 1
     }
   end
 

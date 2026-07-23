@@ -75,33 +75,27 @@ Reads are workspace-scoped. Writes require the development-only
 The route owns HTTP parsing and error responses; `SchedulingRequests` owns the
 domain validation, child-record replacement, and transaction boundary.
 
-## Step 3 Workflow Transition Lifecycle
+## Step 3 Proposed Meeting Lifecycle
 
 ```mermaid
 sequenceDiagram
     participant Browser
     participant API as Roda API
-    participant Workflow as SchedulingRequestWorkflow
+    participant Briefings as Briefings service
     participant DB as PostgreSQL
 
-    Browser->>API: POST transition + actor + expected lock version
-    API->>Workflow: Resolve actor and pass command
-    Workflow->>DB: Load request in workspace
-    Workflow->>Workflow: Check version, transition, and reason
-    Workflow->>DB: Conditional status and lock-version update
-    Workflow->>DB: Insert immutable transition
-    opt Approval or decline
-        Workflow->>DB: Insert decision
-    end
-    Workflow->>DB: Insert audit event and commit
-    Workflow-->>Browser: Updated detail and timeline
+    Browser->>API: Confirm time + actor + expected request lock version
+    API->>Briefings: Schedule proposed meeting
+    Briefings->>DB: Load proposed meeting in workspace
+    Briefings->>DB: Conditional status and lock-version update
+    Briefings->>DB: Insert meeting, briefing, initial version, task, and audit events
+    Briefings-->>Browser: Scheduled meeting with briefing
 ```
 
-`scheduling_requests.status` is a read-optimized projection. It can change only
-through `SchedulingRequestWorkflow`; the transition table is its immutable
-explanation. `lock_version` increments on request edits and transitions. A
-conditional update affecting zero rows produces `409 Conflict`, and the
-transaction writes no transition, decision, or audit event.
+`scheduling_requests.status` is either `proposed` or `scheduled`. `lock_version`
+increments on edits and scheduling. A conditional update affecting zero rows
+produces `409 Conflict`, and the transaction writes no meeting, briefing, task,
+or audit event.
 
 ## Step 4 Relationship Context Lifecycle
 
@@ -149,13 +143,13 @@ sequenceDiagram
     participant Relations as Relationship context
     participant DB as PostgreSQL
 
-    Browser->>API: Create meeting for scheduled request
-    API->>Briefings: Actor, request, confirmed time, and location
-    Briefings->>DB: Begin transaction and verify request is scheduled
+    Browser->>API: Schedule proposed meeting
+    API->>Briefings: Actor, request, confirmed time, location, and expected lock
+    Briefings->>DB: Begin transaction and mark request scheduled
     Briefings->>Relations: Load linked people, organizations, and interactions
     Briefings->>DB: Insert meeting and briefing projection
     Briefings->>DB: Insert version 1, sections, and source snapshots
-    Briefings->>DB: Insert meeting and briefing audit events and commit
+    Briefings->>DB: Insert scheduling, meeting, and briefing audit events and commit
     Briefings-->>Browser: Draft briefing detail
     Browser->>API: Save edited sections and expected lock version
     API->>Briefings: Create version command

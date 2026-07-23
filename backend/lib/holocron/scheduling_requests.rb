@@ -7,7 +7,6 @@ require "date"
 require "uri"
 require_relative "database"
 require_relative "relationships"
-require_relative "scheduling_request_workflow"
 require_relative "tasks"
 
 module Holocron
@@ -22,6 +21,16 @@ module Holocron
       def initialize(fields)
         super("Validation failed.")
         @fields = fields
+      end
+    end
+
+    class ConflictError < StandardError
+      attr_reader :current_lock_version, :current_status
+
+      def initialize(current_lock_version:, current_status:)
+        super("Proposed meeting changed since it was loaded.")
+        @current_lock_version = current_lock_version
+        @current_status = current_status
       end
     end
 
@@ -101,7 +110,7 @@ module Holocron
           assigned_scheduler_member_id: normalized.fetch(:assigned_scheduler_member_id),
           created_by_workspace_member_id: actor[:id],
           **normalized.fetch(:request),
-          status: "submitted",
+          status: "proposed",
           lock_version: 1,
           created_at: now,
           updated_at: now
@@ -111,12 +120,6 @@ module Holocron
           request_id: request_id,
           normalized: normalized,
           workspace: workspace,
-          actor: actor,
-          occurred_at: now,
-          correlation_id: correlation_id
-        )
-        SchedulingRequestWorkflow.record_initial_transition(
-          request_id: request_id,
           actor: actor,
           occurred_at: now,
           correlation_id: correlation_id
@@ -182,7 +185,7 @@ module Holocron
         return nil unless request
 
         if request[:lock_version] != expected_lock_version
-          raise SchedulingRequestWorkflow::ConflictError.new(
+          raise ConflictError.new(
             current_lock_version: request[:lock_version],
             current_status: request[:status]
           )
@@ -198,7 +201,7 @@ module Holocron
         )
         if updated.zero?
           current = Database.db[:scheduling_requests].where(id: id, workspace_id: workspace[:id]).first
-          raise SchedulingRequestWorkflow::ConflictError.new(
+          raise ConflictError.new(
             current_lock_version: current&.fetch(:lock_version),
             current_status: current&.fetch(:status)
           )
@@ -245,7 +248,6 @@ module Holocron
         .reverse_order(:occurred_at)
         .all
         .map { |event| serialize_audit_event(event) }
-      transitions = serialize_transitions(request[:id])
       extraction = db[:request_extractions].where(scheduling_request_id: request[:id]).first
       meeting = db[:meetings].where(scheduling_request_id: request[:id]).first
       briefing = meeting && db[:briefings].where(meeting_id: meeting[:id]).first
@@ -290,8 +292,6 @@ module Holocron
           }
         },
         relationship_context: Relationships.context_for_request(request_id: request[:id], workspace: {id: request[:workspace_id]}),
-        available_transitions: SchedulingRequestWorkflow.available_transitions(request[:status]),
-        transitions: transitions,
         audit_events: audit_events,
         created_at: iso8601(request[:created_at]),
         updated_at: iso8601(request[:updated_at])
@@ -625,47 +625,6 @@ module Holocron
         created_at: iso8601(request[:created_at]),
         updated_at: iso8601(request[:updated_at])
       }
-    end
-
-    def serialize_transitions(request_id)
-      db = Database.db
-      decisions = db[:request_decisions]
-        .where(scheduling_request_id: request_id)
-        .to_hash(:request_state_transition_id)
-
-      db[:request_state_transitions]
-        .left_join(
-          :workspace_members,
-          Sequel[:workspace_members][:id] => Sequel[:request_state_transitions][:actor_workspace_member_id]
-        )
-        .where(Sequel[:request_state_transitions][:scheduling_request_id] => request_id)
-        .select_all(:request_state_transitions)
-        .select_append(Sequel[:workspace_members][:display_name].as(:actor_display_name))
-        .order(Sequel[:request_state_transitions][:occurred_at])
-        .all
-        .map do |transition|
-          decision = decisions[transition[:id]]
-          {
-            id: transition[:id],
-            from_status: transition[:from_status],
-            to_status: transition[:to_status],
-            reason_code: transition[:reason_code],
-            notes: transition[:notes],
-            actor: transition[:actor_workspace_member_id] && {
-              id: transition[:actor_workspace_member_id],
-              display_name: transition[:actor_display_name]
-            },
-            decision: decision && {
-              id: decision[:id],
-              decision: decision[:decision],
-              reason_code: decision[:reason_code],
-              decided_by_workspace_member_id: decision[:decided_by_workspace_member_id],
-              decided_at: iso8601(decision[:decided_at])
-            },
-            correlation_id: transition[:correlation_id],
-            occurred_at: iso8601(transition[:occurred_at])
-          }
-        end
     end
 
     def serialize_member(member)

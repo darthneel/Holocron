@@ -5,7 +5,7 @@ require_relative "database"
 
 module Holocron
   module Calendar
-    PROPOSED_REQUEST_STATUSES = %w[submitted under_review approved].freeze
+    PROPOSED_REQUEST_STATUSES = %w[proposed].freeze
     MAX_RANGE_DAYS = 31
 
     class ValidationError < StandardError; end

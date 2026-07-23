@@ -132,40 +132,32 @@ Completion gate met:
 - Request creation and edits synchronously create audit events.
 - API request tests cover creation, listing, detail, editing, validation, and actor-header enforcement.
 
-## Step 3: Review and Decision Workflow
+## Step 3: Proposed Meeting Lifecycle
 
 **Status: Complete**
 
-Add an explicit scheduling-request state machine.
+Keep scheduling state deliberately small for the AI demo.
 
 Implemented states:
 
-- `submitted`
-- `needs_information`
-- `under_review`
-- `approved`
-- `declined`
+- `proposed`
 - `scheduled`
 
 Implemented data:
 
 - Current status on `scheduling_requests`
-- `request_state_transitions`
-- `request_decisions`
-- Actor, reason, timestamp, and optional notes for every transition
 - Optimistic `lock_version` on each request
+- Ordinary audit events for proposal creation and scheduling
 
-Status changes are accepted only through the transition command. The service
-checks the expected lock version, validates the transition and reason, updates
-the status projection, and appends transition, decision, and audit records in
-one transaction. Existing requests were backfilled as `submitted` with a
-system-authored initial transition.
+Creating an intake produces a proposed meeting. Confirming its time atomically
+changes it to scheduled, creates the meeting and briefing, and records audit
+events. Existing non-scheduled requests are migrated to `proposed`.
 
 Architectural lesson:
 
-Model deterministic workflows and invariants explicitly. A request cannot move
-between arbitrary states, and history must not be reconstructed from the current
-row alone.
+Use the smallest lifecycle that communicates the product story. The audit log
+preserves provenance without turning a demo scheduling flow into an approval
+system.
 
 Completion gate met:
 
@@ -304,7 +296,7 @@ content. Establish versioning, approval, and provenance as domain behavior.
 
 Completion gate:
 
-- A scheduled request can produce a meeting and briefing.
+- A proposed meeting can be scheduled, creating its meeting and briefing in one transaction.
 - Briefings can be edited, versioned, reviewed, and approved.
 - Source records remain inspectable.
 - Relationship context can be assembled through linked people without an
