@@ -6366,6 +6366,7 @@ a:focus-visible {
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
   display: flex;
   gap: 12px;
+  margin-top: 22px;
   padding: 14px 16px;
 }
 
